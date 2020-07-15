@@ -4,6 +4,7 @@
   #:use-module (gnu packages python-xyz)
   #:use-module (gnu packages rsync)
   #:use-module (gnu packages acl)
+  #:use-module (gnu packages time)
   #:use-module (zpid packages acl)
   #:use-module (guix packages)
   #:use-module (guix download)
@@ -28,7 +29,9 @@
            (substitute* "mashru3/cli.py"
              (("'rsync'") (string-append "'" (assoc-ref inputs "rsync") "/bin/rsync'"))
              (("'nfs4_setfacl'") (string-append "'" (assoc-ref inputs "nfs4-acl-tools") "/bin/nfs4_setfacl'"))
-             (("'setfacl'") (string-append "'" (assoc-ref inputs "acl") "/bin/setfacl'"))))))))
+             (("'nfs4_getfacl'") (string-append "'" (assoc-ref inputs "nfs4-acl-tools") "/bin/nfs4_getfacl'"))
+             (("'setfacl'") (string-append "'" (assoc-ref inputs "acl") "/bin/setfacl'"))
+             (("'getfacl'") (string-append "'" (assoc-ref inputs "acl") "/bin/getfacl'"))))))))
   (inputs
    `(("python-unidecode" ,python-unidecode)
      ("python-pyyaml" ,python-pyyaml)

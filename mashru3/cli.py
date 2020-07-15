@@ -1,5 +1,5 @@
 import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser
-from enum import Enum, auto
+from enum import Enum, auto, Flag
 from pathlib import Path
 from getpass import getuser
 from datetime import datetime
@@ -31,7 +31,7 @@ class Workspace:
 		self.directory = d
 
 	def toDict (self):
-		d = dict (path=self.directory, metadata=self.metadata)
+		d = dict (path=self.directory, metadata=self.metadata, permissions=dict(getPermissions (self.directory)))
 		return d
 
 	def writeMetadata (self):
@@ -227,6 +227,33 @@ def setPermissions (group, bits, path, remove=False, default=False, recursive=Fa
 	cmd.append (path)
 	logger.debug (cmd)
 	run (cmd)
+
+def getPermissions (path):
+	if isNfs (path):
+		cmd = ['nfs4_getfacl', path]
+		ret = run (cmd, stdout=subprocess.PIPE)
+		for l in ret.stdout.decode ('ascii').split ('\n'):
+			if l.startswith ('#') or not l:
+				# comment, ignore
+				continue
+			kind, flags, ident, bits = l.split (':', 3)
+			bits = ''.join (filter (lambda x: x in {'r', 'w', 'x'}, bits))
+			if kind == 'A' and 'g' in flags:
+				yield ident, bits
+	else:
+		cmd = ['getfacl', path]
+		ret = run (cmd, stdout=subprocess.PIPE)
+		for l in ret.stdout.decode ('ascii').split ('\n'):
+			if l.startswith ('#') or not l:
+				# comment, ignore
+				continue
+			elif l.startswith ('default:'):
+				# default permissions, ignore as well
+				continue
+			kind, ident, bits = l.split (':', 2)
+			bits = ''.join (filter (lambda x: x != '-', bits))
+			if kind == 'group' and ident:
+				yield ident, bits
 
 def initWorkspace (ws, verbose=False):
 	# Fix permissions. Make sure the creator has default permissions, so files
