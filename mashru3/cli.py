@@ -122,22 +122,25 @@ class Workspace:
 		raise InvalidWorkspace ()
 
 	@classmethod
-	def create (cls, name, basedir):
-		name = ' '.join (name)
-		# use lowercase, unicode-stripped name as directory. Special characters are
-		# replaced by underscore, but no more than one successive underscore and
-		# not at the beginning or the end.
-		r = re.compile (r'[^a-z0-9]+')
-		d = r.sub ('_', unidecode (name.lower ())).strip ('_')
+	def create (cls, name, directory=None):
+		if directory is None:
+			# if no dir is given, create one based on the name
+			name = ' '.join (name)
+			# use lowercase, unicode-stripped name as directory. Special characters are
+			# replaced by underscore, but no more than one successive underscore and
+			# not at the beginning or the end.
+			r = re.compile (r'[^a-z0-9]+')
+			directory = r.sub ('_', unidecode (name.lower ())).strip ('_')
 
-		if not d:
-			logger.error (f'The project name is empty.')
-			return 1
+			if not directory:
+				logger.error (f'The project name is empty.')
+				return 1
 
-		base = os.path.join (basedir, d)
+			directory = os.path.join (os.getcwd (), directory)
+			logger.debug (f'choosing directory {directory} based on name {name}')
 
 		stamp = now ()
-		return cls (base, dict(name=name, created=stamp, modified=stamp, creator=getuser ()))
+		return cls (directory, dict(name=name, created=stamp, modified=stamp, creator=getuser ()))
 
 def getMountPoint (path):
 	""" Return mount point of path """
@@ -305,7 +308,7 @@ def formatWorkspace (args, ws):
 		assert False
 
 def docreate (args):
-	ws = Workspace.create (args.name, basedir=args.directory)
+	ws = Workspace.create (' '.join (args.name), directory=args.directory)
 
 	if os.path.exists (ws.directory):
 		logger.error (f'The directory {ws.directory} already exists. '
@@ -341,7 +344,7 @@ def docreate (args):
 def dorun (args):
 	""" Run program inside workspace """
 
-	ws = Workspace.open (os.getcwd ())
+	ws = Workspace.open (args.directory or os.getcwd ())
 
 	# find the application requested
 	matches = []
@@ -440,7 +443,12 @@ def dorun (args):
 
 def dolist (args):
 	""" List workspaces """
-	for d in args.searchPath:
+	searchPath = list (args.searchPath)
+	if args.directory:
+		searchPath.append (args.directory)
+	if not searchPath:
+		searchPath = [os.getcwd ()]
+	for d in searchPath:
 		logger.debug (f'searching directory {d} for workspaces')
 		for root, dirs, files in os.walk (d):
 			try:
@@ -465,7 +473,7 @@ def dolist (args):
 def doshare (args):
 	""" Share a workspace with a (user) group """
 
-	ws = Workspace.open (os.getcwd ())
+	ws = Workspace.open (args.directory or os.getcwd ())
 
 	if args.write:
 		bits = 'rwx'
@@ -502,9 +510,11 @@ def copydir (source, dest):
 	run (cmd)
 
 def docopy (args):
+	source = args.directory or os.getcwd ()
+
 	if os.path.isdir (args.dest):
 		# if the destination is a directory, assume we want to copy into that directory
-		dest = os.path.join (args.dest, os.path.basename (args.source))
+		dest = os.path.join (args.dest, os.path.basename (source))
 	elif os.path.exists (args.dest):
 		logger.error (f'Destination {args.dest} exists')
 		return 1
@@ -512,13 +522,13 @@ def docopy (args):
 		dest = args.dest
 
 	try:
-		ws = Workspace.open (args.source)
+		ws = Workspace.open (source)
 	except WorkspaceException:
-		logger.error (f'{args.source} is not a valid workspace')
+		logger.error (f'{source} is not a valid workspace')
 		return 1
 
 	try:
-		copydir (args.source, args.dest)
+		copydir (source, args.dest)
 
 		ws = Workspace.open (args.dest)
 
@@ -548,10 +558,10 @@ def main ():
 			help='Configuration file')
 	parser.add_argument('-f', '--format', default=Formatter.HUMAN,
 			type=lambda x: Formatter[x.upper ()], help='Output format')
+	parser.add_argument('-d', '--directory', help='Workspace directory')
 	subparsers = parser.add_subparsers ()
 
 	parserCreate = subparsers.add_parser('create', help='Create a new workspace')
-	parserCreate.add_argument('-d', '--directory', default=cwd, help='Base directory')
 	parserCreate.add_argument('name', nargs='+', help='Workspace name')
 	parserCreate.set_defaults(func=docreate)
 
@@ -564,7 +574,7 @@ def main ():
 
 	parserList = subparsers.add_parser('list', help='List all available workspaces')
 	parserList.add_argument('-s', '--search-path', dest='searchPath',
-			default=[cwd], action='append', help='User')
+			default=[], action='append', help='User')
 	parserList.add_argument('-a', '--all', action='store_true', help='Search hidden directories')
 	parserList.set_defaults(func=dolist)
 
@@ -575,7 +585,6 @@ def main ():
 	parserShare.set_defaults(func=doshare)
 
 	parserCopy = subparsers.add_parser('copy', help='Copy workspace')
-	parserCopy.add_argument('source', help='Source directory')
 	parserCopy.add_argument('dest', nargs='?', default=cwd, help='Destination directory')
 	parserCopy.set_defaults(func=docopy)
 
