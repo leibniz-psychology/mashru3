@@ -27,9 +27,8 @@ class Workspace:
 		self.directory = d
 
 	def toDict (self):
-		m = self.metadata.copy ()
-		m['path'] = self.directory
-		return m
+		d = dict (path=self.directory, metadata=self.metadata)
+		return d
 
 	def writeMetadata (self):
 		with open (self.metapath, 'w') as fd:
