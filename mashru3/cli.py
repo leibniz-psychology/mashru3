@@ -3,6 +3,7 @@ from enum import Enum, auto, Flag
 from pathlib import Path
 from getpass import getuser
 from datetime import datetime
+from functools import partial
 
 import yaml, pytz
 from unidecode import unidecode
@@ -546,6 +547,10 @@ def docopy (args):
 
 	return 1
 
+def dohelp (parser, args):
+	parser.print_usage ()
+	return 1
+
 def main ():
 	cwd = os.getcwd ()
 
@@ -559,6 +564,7 @@ def main ():
 	parser.add_argument('-f', '--format', default=Formatter.HUMAN,
 			type=lambda x: Formatter[x.upper ()], help='Output format')
 	parser.add_argument('-d', '--directory', help='Workspace directory')
+	parser.set_defaults (func=partial (dohelp, parser))
 	subparsers = parser.add_subparsers ()
 
 	parserCreate = subparsers.add_parser('create', help='Create a new workspace')
