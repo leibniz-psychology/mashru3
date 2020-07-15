@@ -31,7 +31,10 @@ class Workspace:
 		self.directory = d
 
 	def toDict (self):
-		d = dict (path=self.directory, metadata=self.metadata, permissions=dict(getPermissions (self.directory)))
+		d = dict (path=self.directory,
+				metadata=self.metadata,
+				permissions=dict(getPermissions (self.directory)),
+				applications=list (map (dict, self.applications)))
 		return d
 
 	def writeMetadata (self):
