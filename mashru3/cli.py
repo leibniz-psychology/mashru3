@@ -420,10 +420,12 @@ def dolist (args):
 			except InvalidWorkspace:
 				pass
 
-			# do not search dotfiles
-			dotfiles = filter (lambda x: x.startswith ('.'), dirs)
-			for df in dotfiles:
-				dirs.remove (df)
+			if not args.all:
+				# do not search dotfiles
+				dotfiles = list (filter (lambda x: x.startswith ('.'), dirs))
+				for df in dotfiles:
+					logger.debug (f'removing {df} from search tree')
+					dirs.remove (df)
 
 def doshare (args):
 	""" Share a workspace with a (user) group """
@@ -528,6 +530,7 @@ def main ():
 	parserList = subparsers.add_parser('list', help='List all available workspaces')
 	parserList.add_argument('-s', '--search-path', dest='searchPath',
 			default=[cwd], action='append', help='User')
+	parserList.add_argument('-a', '--all', action='store_true', help='Search hidden directories')
 	parserList.set_defaults(func=dolist)
 
 	parserShare = subparsers.add_parser('share', help='Share workspace with other users')
