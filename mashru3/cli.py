@@ -35,7 +35,8 @@ class Workspace:
 		d = dict (path=self.directory,
 				metadata=self.metadata,
 				permissions=dict(getPermissions (self.directory)),
-				applications=list (map (dict, self.applications)))
+				applications=list (self.applications),
+				)
 		return d
 
 	def writeMetadata (self):
@@ -74,7 +75,7 @@ class Workspace:
 	@property
 	def applications (self):
 		# dummy application to start a shell
-		yield dict (Name='Shell', Exec=None)
+		yield dict (name='Shell', exec=None)
 
 		searchdirs = [(self.directory, '.local', 'share'),
 				(self.profilepath, 'share'),
@@ -82,12 +83,14 @@ class Workspace:
 		for datadir in map (lambda x: os.path.join (*x, 'applications'), searchdirs):
 			for root, dirs, files in os.walk (datadir):
 				for f in filter (lambda x: x.endswith ('.desktop'), files):
+					path = os.path.join (root, f)
 					config = configparser.ConfigParser ()
-					config.read (os.path.join (root, f))
-					entry = config['Desktop Entry']
+					config.read (path)
+					entry = dict (config['Desktop Entry'])
+					entry['_id'] = os.path.relpath (path, start=datadir).replace ('/', '-')
 					# not checking tryexec here, because that would require
 					# running guix environment
-					if entry.get ('Type') == 'Application':
+					if entry.get ('type') == 'Application':
 						yield entry
 
 	@property
@@ -349,16 +352,16 @@ def dorun (args):
 
 	# find the application requested
 	matches = []
-	for entry in sorted (ws.applications, key=lambda x: x.get ('Name').lower ()):
+	for entry in sorted (ws.applications, key=lambda x: x.get ('name').lower ()):
 		if not args.application:
 			if args.format == Formatter.HUMAN:
-				print (entry.get ('Name'))
+				print (entry.get ('name'))
 			elif args.format == Formatter.YAML:
 				yaml.dump (dict (entry), sys.stdout)
 				sys.stdout.write ('---\n')
 			else:
 				assert False
-		elif args.application.lower() in entry.get ('Name').lower ():
+		elif args.application.lower() in entry.get ('name').lower ():
 			matches.append (entry)
 
 	if not args.application:
@@ -371,7 +374,7 @@ def dorun (args):
 	elif len (matches) > 1:
 		logger.error ('Multiple applications found:')
 		for m in matches:
-			logger.error (m.get ('Name'))
+			logger.error (m.get ('name'))
 		return 1
 	entry = matches[0]
 
@@ -386,8 +389,8 @@ def dorun (args):
 
 	try:
 		if entry:
-			execcmd = entry.get ('Exec')
-			key = entry.get ('X-Conductor-Key')
+			execcmd = entry.get ('exec')
+			key = entry.get ('x-conductor-key')
 		else:
 			execcmd = None
 			key = None
@@ -399,7 +402,7 @@ def dorun (args):
 				return 1
 			if args.user:
 				forest = f'{args.user}@{forest}'
-			socket = entry.get ('X-Conductor-Socket')
+			socket = entry.get ('x-conductor-socket')
 			# tilde-expand is relative to homedir location inside container
 			if socket.startswith ('~/'):
 				socket = os.path.join (ws.directory, socket[2:])
