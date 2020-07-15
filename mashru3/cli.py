@@ -2,11 +2,15 @@ import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser
 from enum import Enum, auto
 from pathlib import Path
 from getpass import getuser
-import yaml
+from datetime import datetime
 
+import yaml, pytz
 from unidecode import unidecode
 
 logger = logging.getLogger ('cli')
+
+def now ():
+	return datetime.now (tz=pytz.utc)
 
 class Formatter (Enum):
 	HUMAN = auto ()
@@ -129,7 +133,8 @@ class Workspace:
 
 		base = os.path.join (basedir, d)
 
-		return cls (base, dict(name=name))
+		stamp = now ()
+		return cls (base, dict(name=name, created=stamp, modified=stamp, creator=getuser ()))
 
 def getMountPoint (path):
 	""" Return mount point of path """

@@ -35,6 +35,7 @@
      ("rsync" ,rsync) ; for rsync
      ("acl" ,acl) ; for setfacl
      ("nfs4-acl-tools" ,nfs4-acl-tools) ; for nfs4_setfacl
+     ("python-pytz" ,python-pytz)
      ))
   (home-page #f)
   (synopsis #f)
