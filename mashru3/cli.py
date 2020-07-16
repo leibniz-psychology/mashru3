@@ -1,4 +1,4 @@
-import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser
+import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, json
 from enum import Enum, auto, Flag
 from pathlib import Path
 from getpass import getuser
@@ -16,6 +16,16 @@ def now ():
 class Formatter (Enum):
 	HUMAN = auto ()
 	YAML = auto ()
+	JSON = auto ()
+
+class Encoder (json.JSONEncoder):
+    def default (self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat ()
+        return json.JSONEncoder.default (self, obj)
+
+def jsonDump (o, fd=None):
+	return json.dump (o, fd, cls=Encoder)
 
 class WorkspaceException (Exception):
 	pass
@@ -308,6 +318,9 @@ def formatWorkspace (args, ws):
 	elif args.format == Formatter.YAML:
 		yaml.dump (ws.toDict (), sys.stdout)
 		sys.stdout.write ('---\n')
+	elif args.format == Formatter.JSON:
+		jsonDump (ws.toDict (), sys.stdout)
+		sys.stdout.write ('\n')
 	else:
 		assert False
 
@@ -359,6 +372,9 @@ def dorun (args):
 			elif args.format == Formatter.YAML:
 				yaml.dump (dict (entry), sys.stdout)
 				sys.stdout.write ('---\n')
+			elif args.format == Formatter.JSON:
+				jsonDump (dict (entry), sys.stdout)
+				sys.stdout.write ('\n')
 			else:
 				assert False
 		elif args.application.lower() in entry.get ('name').lower ():
@@ -462,6 +478,9 @@ def dolist (args):
 				elif args.format == Formatter.YAML:
 					yaml.dump (ws.toDict (), sys.stdout)
 					sys.stdout.write ('---\n')
+				elif args.format == Formatter.JSON:
+					jsonDump (ws.toDict (), sys.stdout)
+					sys.stdout.write ('\n')
 				else:
 					assert False
 			except InvalidWorkspace:
