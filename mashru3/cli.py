@@ -1,4 +1,4 @@
-import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, json
+import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, json, secrets
 from enum import Enum, auto, Flag
 from pathlib import Path
 from getpass import getuser
@@ -7,6 +7,8 @@ from functools import partial
 
 import yaml, pytz
 from unidecode import unidecode
+
+from .uid import uintToQuint
 
 logger = logging.getLogger ('cli')
 
@@ -35,7 +37,11 @@ class InvalidWorkspace (WorkspaceException):
 
 class Workspace:
 	def __init__ (self, d, meta=None):
-		defaultMeta = dict (version=1)
+		# create default uid with 64 random bits
+		defaultMeta = dict (
+				version=1,
+				_id=uintToQuint (secrets.randbelow (2**64), 4),
+				)
 		if meta:
 			defaultMeta.update (meta)
 		self.metadata = defaultMeta
