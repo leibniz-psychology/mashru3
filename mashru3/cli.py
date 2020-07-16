@@ -139,7 +139,6 @@ class Workspace:
 	def create (cls, name, directory=None):
 		if directory is None:
 			# if no dir is given, create one based on the name
-			name = ' '.join (name)
 			# use lowercase, unicode-stripped name as directory. Special characters are
 			# replaced by underscore, but no more than one successive underscore and
 			# not at the beginning or the end.
