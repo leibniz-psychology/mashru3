@@ -91,7 +91,7 @@ class Workspace:
 	@property
 	def applications (self):
 		# dummy application to start a shell
-		yield dict (name='Shell', exec=None)
+		yield dict (name='Shell', exec=None, _id='org.leibniz-psychology.mashru3.shell')
 
 		searchdirs = [(self.directory, '.local', 'share'),
 				(self.profilepath, 'share'),
