@@ -382,7 +382,8 @@ def dorun (args):
 				sys.stdout.write ('\n')
 			else:
 				assert False
-		elif args.application.lower() in entry.get ('name').lower ():
+		elif args.application.lower() in entry.get ('name').lower () or \
+				args.application.lower () == entry.get ('_id').lower ():
 			matches.append (entry)
 
 	if not args.application:
