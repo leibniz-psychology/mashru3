@@ -578,9 +578,29 @@ def docopy (args):
 
 	return 1
 
+def domodify (args):
+	try:
+		ws = Workspace.open (args.directory or os.getcwd ())
+	except WorkspaceException:
+		logger.error (f'{source} is not a valid workspace')
+		return 1
+
+	logger.debug (f'updating metadata with {args.metadata}')
+	ws.metadata.update (args.metadata)
+	# remove empty values
+	remove = list (filter (lambda kv: not kv[1], args.metadata))
+	logger.debug (f'removing empty keys {remove}')
+	for k, v in remove:
+		ws.metadata.pop (k)
+	ws.writeMetadata ()
+
 def dohelp (parser, args):
 	parser.print_usage ()
 	return 1
+
+def parseKV (s):
+	k, v = s.split ('=', 1)
+	return (k.strip (), v.strip ())
 
 def main ():
 	cwd = os.getcwd ()
@@ -624,6 +644,10 @@ def main ():
 	parserCopy = subparsers.add_parser('copy', help='Copy workspace')
 	parserCopy.add_argument('dest', nargs='?', default=cwd, help='Destination directory')
 	parserCopy.set_defaults(func=docopy)
+
+	parserCopy = subparsers.add_parser('modify', help='Change workspace metadata')
+	parserCopy.add_argument('metadata', nargs='+', type=parseKV, help='Key-value pairs')
+	parserCopy.set_defaults(func=domodify)
 
 	args = parser.parse_args()
 	logformat = '{message}'
