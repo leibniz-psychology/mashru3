@@ -285,20 +285,21 @@ def initWorkspace (ws, verbose=False):
 	# created by other users are accessible by default. 
 	setPermissions (getuser (), 'rwx', ws.directory, default=True, recursive=True)
 
-	# get a fresh guix
-	logger.debug (f'Getting a fresh guix')
-	os.makedirs (ws.guixdir, exist_ok=True)
-	cmd = ['guix', 'pull',
-			'-p', os.path.join (ws.guixdir, 'current'),
-			]
-	# use channel file from skeleton instead of system default if it exists
-	if os.path.isfile (ws.channelpath):
-		cmd.extend (['-C', ws.channelpath])
-	try:
-		run (cmd)
-	except (subprocess.CalledProcessError, KeyboardInterrupt):
-		logger.error ('Failed to initialize guix')
-		raise
+	# get a fresh guix unless it already exists
+	if not os.path.exists (ws.guixbin):
+		logger.debug (f'Getting a fresh guix')
+		os.makedirs (ws.guixdir, exist_ok=True)
+		cmd = ['guix', 'pull',
+				'-p', os.path.join (ws.guixdir, 'current'),
+				]
+		# use channel file from skeleton instead of system default if it exists
+		if os.path.isfile (ws.channelpath):
+			cmd.extend (['-C', ws.channelpath])
+		try:
+			run (cmd)
+		except (subprocess.CalledProcessError, KeyboardInterrupt):
+			logger.error ('Failed to initialize guix')
+			raise
 
 	# pin guix version, so copying the project will use the exact same version
 	tmpChannelPath = ws.channelpath + '.tmp'
@@ -309,11 +310,13 @@ def initWorkspace (ws, verbose=False):
 
 	ws.writeMetadata ()
 
-	# create symlink ~/.guix-profile, so apps can be found
-	cmd = ws.envcmd
-	# don’t actually enter environment
-	cmd.extend (['--', 'true'])
-	run (cmd)
+	# create symlink ~/.guix-profile, so apps can be found (unless
+	# pre-initialized)
+	if not os.path.exists (ws.profilepath):
+		cmd = ws.envcmd
+		# don’t actually enter environment
+		cmd.extend (['--', 'true'])
+		run (cmd)
 
 	return True
 
