@@ -40,12 +40,16 @@ class Workspace:
 		# create default uid with 64 random bits
 		defaultMeta = dict (
 				version=1,
-				_id=uintToQuint (secrets.randbelow (2**64), 4),
+				_id=self.randomId (),
 				)
 		if meta:
 			defaultMeta.update (meta)
 		self.metadata = defaultMeta
 		self.directory = d
+
+	@staticmethod
+	def randomId ():
+		return uintToQuint (secrets.randbelow (2**64), 4)
 
 	def toDict (self):
 		d = dict (path=self.directory,
@@ -608,6 +612,8 @@ def docopy (args):
 		copydir (source, args.dest)
 
 		ws = Workspace.open (args.dest)
+		ws.metadata['_id'] = ws.randomId ()
+		ws.writeMetadata ()
 
 		if os.path.islink (ws.profilepath):
 			os.unlink (ws.profilepath)
@@ -619,7 +625,7 @@ def docopy (args):
 		return 0
 	except:
 		logger.error (f'copying workspace failed')
-		shutil.rmtree (ws.directory)
+		shutil.rmtree (args.dest)
 
 	return 1
 
