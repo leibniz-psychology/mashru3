@@ -565,6 +565,8 @@ def doshare (args):
 		else:
 			logger.info (f'Parent directory permissions will not be revoked automatically.')
 
+	formatWorkspace (args, ws)
+
 	return 0
 
 def copydir (source, dest):
@@ -636,6 +638,10 @@ def domodify (args):
 	for k, v in remove:
 		ws.metadata.pop (k)
 	ws.writeMetadata ()
+
+	formatWorkspace (args, ws)
+
+	return 0
 
 def dohelp (parser, args):
 	parser.print_usage ()
