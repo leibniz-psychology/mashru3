@@ -250,7 +250,10 @@ def setPermissions (group, bits, path, remove=False, default=False, recursive=Fa
 		cmd.append (bits)
 	cmd.append (path)
 	logger.debug (cmd)
-	run (cmd)
+	try:
+		run (cmd)
+	except subprocess.CalledProcessError:
+		raise Exception ('cannot set permissions')
 
 def getPermissions (path):
 	if isNfs (path):
@@ -504,10 +507,29 @@ def dolist (args):
 					logger.debug (f'removing {df} from search tree')
 					dirs.remove (df)
 
+def prefixes (l):
+	""" Get all prefixes for list l, i.e. [1, 2, 3] → [1], [1, 2], [1, 2, 3] """
+	p = []
+	for e in l:
+		p.append (e)
+		yield list (p)
+
+def isPrefix (a, b):
+	""" Return true if a is prefix of b """
+	if len (a) > len (b):
+		return False
+	return all (map (lambda x: x[0] == x[1], zip (a, b)))
+
 def doshare (args):
 	""" Share a workspace with a (user) group """
 
 	ws = Workspace.open (args.directory or os.getcwd ())
+	# realpath for comparison
+	homeDir = os.path.realpath (os.path.expanduser ('~')).split (os.path.sep)
+	wsDir = os.path.realpath (ws.directory).split (os.path.sep)
+	if not args.force and isPrefix (homeDir, wsDir):
+		logger.error ('Cannot share projects in your home directory. Move them to a public space.')
+		return 2
 
 	if args.write:
 		bits = 'rwx'
@@ -525,6 +547,25 @@ def doshare (args):
 		# grant default permission to group, so all new files inherit these rights
 		setPermissions (g, bits, ws.directory, default=True,
 				recursive=True, remove=args.remove)
+
+		# also grant permissions to parent directory (if possible). Cannot
+		# safely remove permissions though.
+		if not args.remove:
+			# exclude ws directory, whose permissions we set above already.
+			for p in prefixes (wsDir[:-1]):
+				p = os.path.join ('/', *p)
+				if not p:
+					continue
+				# only grant read/search permissions
+				assert os.path.isdir (p), f'{p} is not a directory'
+				try:
+					setPermissions (g, 'rx', p, recursive=False)
+				except Exception as e:
+					logger.debug (f'Cannot set permissions on parent directory {p}')
+		else:
+			logger.info (f'Parent directory permissions will not be revoked automatically.')
+
+	return 0
 
 def copydir (source, dest):
 	""" Recursively copy directory """
@@ -640,6 +681,7 @@ def main ():
 	parserShare = subparsers.add_parser('share', help='Share workspace with other users')
 	parserShare.add_argument('-x', '--remove', action='store_true', help='Unshare')
 	parserShare.add_argument('-w', '--write', action='store_true', help='Grant write permissions as well')
+	parserShare.add_argument('-f', '--force', action='store_true', help='Override security checks')
 	parserShare.add_argument('groups', nargs='+', help='Target groups')
 	parserShare.set_defaults(func=doshare)
 
