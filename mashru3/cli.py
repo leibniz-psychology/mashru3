@@ -142,7 +142,7 @@ class Workspace:
 		raise InvalidWorkspace ()
 
 	@classmethod
-	def create (cls, name, directory=None):
+	def create (cls, name, directory=None, base=None):
 		if directory is None:
 			# if no dir is given, create one based on the name
 			# use lowercase, unicode-stripped name as directory. Special characters are
@@ -152,10 +152,9 @@ class Workspace:
 			directory = r.sub ('_', unidecode (name.lower ())).strip ('_')
 
 			if not directory:
-				logger.error (f'The project name is empty.')
-				return 1
+				raise ValueError ('Project name is empty.')
 
-			directory = os.path.join (os.getcwd (), directory)
+			directory = os.path.join (base or os.getcwd (), directory)
 			logger.debug (f'choosing directory {directory} based on name {name}')
 
 		stamp = now ()
@@ -333,7 +332,10 @@ def formatWorkspace (args, ws):
 		assert False
 
 def docreate (args):
-	ws = Workspace.create (' '.join (args.name), directory=args.directory)
+	if args.directory and os.path.isdir (args.directory):
+		ws = Workspace.create (' '.join (args.name), base=args.directory)
+	else:
+		ws = Workspace.create (' '.join (args.name), directory=args.directory)
 
 	if os.path.exists (ws.directory):
 		logger.error (f'The directory {ws.directory} already exists. '
