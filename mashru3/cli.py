@@ -1,4 +1,4 @@
-import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, json, secrets
+import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, json, secrets, stat, random
 from enum import Enum, auto, Flag
 from pathlib import Path
 from getpass import getuser
@@ -45,16 +45,17 @@ class Workspace:
 		if meta:
 			defaultMeta.update (meta)
 		self.metadata = defaultMeta
-		self.directory = d
+		self.directory = Path (d).resolve ()
 
 	@staticmethod
 	def randomId ():
 		return uintToQuint (secrets.randbelow (2**64), 4)
 
 	def toDict (self):
-		d = dict (path=self.directory,
+		wsdir = self.directory
+		d = dict (path=str (wsdir),
 				metadata=self.metadata,
-				permissions=dict(getPermissions (self.directory)),
+				permissions=dict(getPermissions (wsdir)),
 				applications=list (self.applications),
 				)
 		return d
@@ -65,42 +66,42 @@ class Workspace:
 
 	@property
 	def configdir (self):
-		return os.path.join (self.directory, '.config')
+		return self.directory / '.config'
 
 	@property
 	def guixdir (self):
-		return os.path.join (self.configdir, 'guix')
+		return self.configdir / 'guix'
 
 	@property
 	def guixbin (self):
-		return os.path.join (self.guixdir, 'current', 'bin', 'guix')
+		return self.guixdir / 'current' / 'bin' / 'guix'
 
 	@property
 	def metapath (self):
 		""" Path for metadata file """
-		return os.path.join (self.configdir, 'workspace.yaml')
+		return self.configdir / 'workspace.yaml'
 
 	@property
 	def manifestpath (self):
-		return os.path.join (self.guixdir, 'manifest.scm')
+		return self.guixdir / 'manifest.scm'
 
 	@property
 	def channelpath (self):
-		return os.path.join (self.guixdir, 'channels.scm')
+		return self.guixdir / 'channels.scm'
 
 	@property
 	def profilepath (self):
-		return os.path.join (self.directory, '.guix-profile')
+		return self.directory / '.guix-profile'
 
 	@property
 	def applications (self):
 		# dummy application to start a shell
 		yield dict (name='Shell', exec=None, _id='org.leibniz-psychology.mashru3.shell')
 
-		searchdirs = [(self.directory, '.local', 'share'),
-				(self.profilepath, 'share'),
-				(self.guixdir, 'current', 'share')]
-		for datadir in map (lambda x: os.path.join (*x, 'applications'), searchdirs):
+		searchdirs = [self.directory / '.local' / 'share',
+				self.profilepath / 'share',
+				self.guixdir / 'current' / 'share']
+		for datadir in map (lambda x: x / 'applications', searchdirs):
 			for root, dirs, files in os.walk (datadir):
 				for f in filter (lambda x: x.endswith ('.desktop'), files):
 					path = os.path.join (root, f)
@@ -117,7 +118,7 @@ class Workspace:
 	def envcmd (self):
 		""" Command that starts a guix environment """
 		user = 'joeuser'
-		cmd = [self.guixbin,
+		cmd = [str (self.guixbin),
 				'environment', '-C', '-N',
 				'-u', user,
 				'-E', '^LANG$', # allow passing the current language
@@ -125,44 +126,59 @@ class Workspace:
 				'--no-cwd',
 				f'--share={self.directory}=/home/{user}',
 				]
-		if os.path.isfile (self.manifestpath):
-			cmd.extend (['-m', self.manifestpath])
+		if self.manifestpath.is_file ():
+			cmd.extend (['-m', str (self.manifestpath)])
 		else:
 			# make sure basic commands like `true` exist
 			cmd.extend (['--ad-hoc', 'coreutils'])
 		return cmd
 
 	@classmethod
-	def open (cls, d):
+	def open (cls, d: Path):
 		"""
 		Verify directory d is a valid workspace and get its metadata
 		"""
 		ws = cls (d)
 		checkfiles = [ws.guixbin, ws.metapath]
-		if all (map (lambda x: os.path.exists (x), checkfiles)):
+		if all (map (lambda x: x.exists (), checkfiles)):
 			with open (ws.metapath) as fd:
 				ws.metadata = yaml.safe_load (fd)
 				return ws
 		raise InvalidWorkspace ()
 
 	@classmethod
-	def create (cls, name, directory=None, base=None):
-		if directory is None:
-			# if no dir is given, create one based on the name
-			# use lowercase, unicode-stripped name as directory. Special characters are
-			# replaced by underscore, but no more than one successive underscore and
-			# not at the beginning or the end.
-			r = re.compile (r'[^a-z0-9]+')
-			directory = r.sub ('_', unidecode (name.lower ())).strip ('_')
-
-			if not directory:
-				raise ValueError ('Project name is empty.')
-
-			directory = os.path.join (base or os.getcwd (), directory)
-			logger.debug (f'choosing directory {directory} based on name {name}')
-
+	def create (cls, suggestedDir: Path, metadataOverride):
 		stamp = now ()
-		return cls (directory, dict(name=name, created=stamp, modified=stamp, creator=getuser ()))
+		metadata = dict (created=stamp, modified=stamp, creator=getuser ())
+		metadata.update (metadataOverride)
+
+		if suggestedDir.exists ():
+			if suggestedDir.is_dir ():
+				# if no dir is given, create one based on the name
+				# use lowercase, unicode-stripped name as directory. Special characters are
+				# replaced by underscore, but no more than one successive underscore and
+				# not at the beginning or the end.
+				r = re.compile (r'[^a-z0-9]+')
+				name = metadata.get ('name', '')
+				subdir = r.sub ('_', unidecode (name.lower ())).strip ('_')
+				if not subdir:
+					# simply generate one
+					subdir = 'unnamed_project'
+
+				ext = ''
+				while True:
+					directory = suggestedDir / (subdir + ext)
+					if not directory.exists ():
+						break
+					ext = f'_{random.randint (0, 2**16)}'
+				logger.debug (f'choosing directory {directory} based on name {name}')
+			else:
+				raise ValueError ('Destination exists')
+		else:
+			# use as-as
+			directory = suggestedDir
+
+		return cls (directory, metadata)
 
 def getMountPoint (path):
 	""" Return mount point of path """
@@ -214,9 +230,10 @@ def run (cmd, stdout=None):
 	if not stdout and not verbose:
 		stdout = subprocess.DEVNULL
 	stderr = None if verbose else subprocess.DEVNULL
+	logger.debug (f'running {cmd}')
 	return subprocess.run (cmd, stdout=stdout, stderr=stderr, check=True)
 
-def setPermissions (group, bits, path, remove=False, default=False, recursive=False):
+def setPermissions (group, bits, path: Path, remove=False, default=False, recursive=False):
 	""" ACL abstraction that supports NFS """
 	if isNfs (path):
 		cmd = ['nfs4_setfacl']
@@ -252,14 +269,14 @@ def setPermissions (group, bits, path, remove=False, default=False, recursive=Fa
 		if default:
 			bits = f'd:{bits}'
 		cmd.append (bits)
-	cmd.append (path)
-	logger.debug (cmd)
+	cmd.append (str (path))
 	try:
 		run (cmd)
-	except subprocess.CalledProcessError:
+	except subprocess.CalledProcessError as e:
+		logger.debug (e)
 		raise Exception ('cannot set permissions')
 
-def getPermissions (path):
+def getPermissions (path: Path):
 	if isNfs (path):
 		cmd = ['nfs4_getfacl', path]
 		ret = run (cmd, stdout=subprocess.PIPE)
@@ -274,17 +291,32 @@ def getPermissions (path):
 	else:
 		cmd = ['getfacl', path]
 		ret = run (cmd, stdout=subprocess.PIPE)
+		owner = None
 		for l in ret.stdout.decode ('ascii').split ('\n'):
-			if l.startswith ('#') or not l:
-				# comment, ignore
+			if not l:
+				# empty, ignore
 				continue
 			elif l.startswith ('default:'):
 				# default permissions, ignore as well
 				continue
-			kind, ident, bits = l.split (':', 2)
+			elif l.startswith ('# owner: '):
+				_, owner = l.split (':', 1)
+				owner = owner.strip ()
+				continue
+			elif l.startswith ('#'):
+				# other comments, ignore
+				continue
+			try:
+				kind, ident, bits = l.split (':', 2)
+			except ValueError:
+				logger.error (f'Cannot parse line {l}')
+				raise
 			bits = ''.join (filter (lambda x: x != '-', bits))
 			if kind == 'group' and ident:
 				yield ident, bits
+			elif kind == 'user':
+				# use same attribute names as NFS4 for metadata change
+				yield owner, bits + 'tT'
 
 def initWorkspace (ws, verbose=False):
 	# Fix permissions. Make sure the creator has default permissions, so files
@@ -292,11 +324,11 @@ def initWorkspace (ws, verbose=False):
 	setPermissions (getuser (), 'rwx', ws.directory, default=True, recursive=True)
 
 	# get a fresh guix unless it already exists
-	if not os.path.exists (ws.guixbin):
+	if not ws.guixbin.exists ():
 		logger.debug (f'Getting a fresh guix')
 		os.makedirs (ws.guixdir, exist_ok=True)
 		cmd = ['guix', 'pull',
-				'-p', os.path.join (ws.guixdir, 'current'),
+				'-p', str (ws.guixdir / 'current'),
 				]
 		# use channel file from skeleton instead of system default if it exists
 		if os.path.isfile (ws.channelpath):
@@ -308,9 +340,9 @@ def initWorkspace (ws, verbose=False):
 			raise
 
 	# pin guix version, so copying the project will use the exact same version
-	tmpChannelPath = ws.channelpath + '.tmp'
+	tmpChannelPath = str (ws.channelpath) + '.tmp'
 	with open (tmpChannelPath, 'w') as fd:
-		cmd = [ws.guixbin, 'describe', '-f', 'channels']
+		cmd = [str (ws.guixbin), 'describe', '-f', 'channels']
 		run (cmd, stdout=fd)
 	os.rename (tmpChannelPath, ws.channelpath)
 
@@ -318,7 +350,7 @@ def initWorkspace (ws, verbose=False):
 
 	# create symlink ~/.guix-profile, so apps can be found (unless
 	# pre-initialized)
-	if not os.path.exists (ws.profilepath):
+	if not ws.profilepath.exists ():
 		cmd = ws.envcmd
 		# don’t actually enter environment
 		cmd.extend (['--', 'true'])
@@ -339,27 +371,18 @@ def formatWorkspace (args, ws):
 		assert False
 
 def docreate (args):
-	if args.directory and os.path.isdir (args.directory):
-		ws = Workspace.create (' '.join (args.name), base=args.directory)
-	else:
-		ws = Workspace.create (' '.join (args.name), directory=args.directory)
-
-	if os.path.exists (ws.directory):
-		logger.error (f'The directory {ws.directory} already exists. '
-				'Try a different workspace name.')
-		return 1
-
-	logger.info (f'Creating workspace {ws.metadata["name"]}')
+	ws = Workspace.create (args.directory, dict (name=' '.join (args.name)))
+	logger.info (f'Creating workspace {ws.metadata["name"]} at {ws.directory}')
 
 	try:
-		skeldirs = [os.path.expanduser ('~/.config/' + __package__ + '/skel'),
-				'/etc/' + __package__ + '/skel']
+		skeldirs = [Path.home() / '.config' / __package__ / 'skel',
+				Path ('/etc/' + __package__ + '/skel')]
 		for d in skeldirs:
-			if os.path.isdir (d):
+			if d.is_dir ():
 				logger.debug (f'Copying skeleton at {d} to {ws.directory}')
 				copydir (d, ws.directory)
 				break
-		if not os.path.isdir (ws.directory):
+		if not ws.directory.is_dir ():
 			logger.debug (f'No skeleton directory found, creating empty workspace.')
 			os.makedirs (ws.directory)
 
@@ -369,16 +392,16 @@ def docreate (args):
 		formatWorkspace (args, ws)
 
 		return 0
-	except:
-		logger.error ('Creating workspace failed.')
-		shutil.rmtree (ws.directory)
+	except Exception as e:
+		logger.error (f'Creating workspace failed: {e}')
+		#shutil.rmtree (ws.directory)
 
 	return 1
 
 def dorun (args):
 	""" Run program inside workspace """
 
-	ws = Workspace.open (args.directory or os.getcwd ())
+	ws = Workspace.open (args.directory)
 
 	# find the application requested
 	matches = []
@@ -413,11 +436,11 @@ def dorun (args):
 	entry = matches[0]
 
 	# `guix environment -P` does not work if the symlink already exists
-	profileLink = os.path.join (ws.directory, '.guix-profile')
-	if os.path.islink (profileLink):
+	profileLink = ws.directory / '.guix-profile'
+	if profileLink.is_symlink ():
 		linkDest = os.readlink (profileLink)
-		os.unlink (profileLink)
-	elif os.path.exists (profileLink):
+		profileLink.unlink ()
+	elif profileLink.exists ():
 		logger.error (f'{profileLink} is not a symlink')
 		return 1
 
@@ -439,12 +462,12 @@ def dorun (args):
 			socket = entry.get ('x-conductor-socket')
 			# tilde-expand is relative to homedir location inside container
 			if socket.startswith ('~/'):
-				socket = os.path.join (ws.directory, socket[2:])
+				socket = ws.directory / socket[2:]
 			cmd += ['conductor',
 					'-k', key,
 					'-r', # replace
 					forest,
-					socket,
+					str (socket),
 					'--',
 					]
 			if args.verbose:
@@ -474,8 +497,8 @@ def dorun (args):
 		logger.debug (f'program returned {ret}')
 	finally:
 		# restore symlink if it does not exist any more
-		if not os.path.exists (profileLink):
-			os.symlink (linkDest, profileLink)
+		if not profileLink.exists ():
+			profileLink.symlink_to (linkDest)
 
 	return ret
 
@@ -573,8 +596,10 @@ def doshare (args):
 
 	return 0
 
-def copydir (source, dest):
+def copydir (source: Path, dest: Path):
 	""" Recursively copy directory """
+	source = str (source)
+	dest = str (dest)
 	# until shutil.copytree does not suck any more
 	if not source.endswith ('/'):
 		source += '/'
@@ -591,47 +616,32 @@ def copydir (source, dest):
 	run (cmd)
 
 def docopy (args):
-	source = args.directory or os.getcwd ()
-
-	if os.path.isdir (args.dest):
-		# if the destination is a directory, assume we want to copy into that directory
-		dest = os.path.join (args.dest, os.path.basename (source))
-	elif os.path.exists (args.dest):
-		logger.error (f'Destination {args.dest} exists')
-		return 1
-	else:
-		dest = args.dest
-
 	try:
-		ws = Workspace.open (source)
+		source = Workspace.open (args.directory)
 	except WorkspaceException:
 		logger.error (f'{source} is not a valid workspace')
 		return 1
 
+	meta = dict (source.metadata)
+	# pick a new ID
+	meta.update (dict (_id=Workspace.randomId ()))
+	destination = Workspace.create (args.dest, meta)
+
 	try:
-		copydir (source, args.dest)
+		copydir (source.directory, destination.directory)
+		destination.writeMetadata ()
 
-		ws = Workspace.open (args.dest)
-		ws.metadata['_id'] = ws.randomId ()
-		ws.writeMetadata ()
-
-		if os.path.islink (ws.profilepath):
-			os.unlink (ws.profilepath)
-		else:
-			assert False
-		initWorkspace (ws, args.verbose)
-
-		formatWorkspace (args, ws)
+		formatWorkspace (args, destination)
 		return 0
-	except:
-		logger.error (f'copying workspace failed')
-		shutil.rmtree (args.dest)
+	except Exception as e:
+		logger.error (f'copying workspace failed: {e}')
+		#shutil.rmtree (args.dest)
 
 	return 1
 
 def domodify (args):
 	try:
-		ws = Workspace.open (args.directory or os.getcwd ())
+		ws = Workspace.open (args.directory)
 	except WorkspaceException:
 		logger.error (f'{source} is not a valid workspace')
 		return 1
@@ -658,7 +668,7 @@ def parseKV (s):
 	return (k.strip (), v.strip ())
 
 def main ():
-	cwd = os.getcwd ()
+	cwd = Path.cwd ()
 
 	parser = argparse.ArgumentParser(description='Manage guix workspaces.')
 	parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
@@ -669,7 +679,7 @@ def main ():
 			help='Configuration file')
 	parser.add_argument('-f', '--format', default=Formatter.HUMAN,
 			type=lambda x: Formatter[x.upper ()], help='Output format')
-	parser.add_argument('-d', '--directory', help='Workspace directory')
+	parser.add_argument('-d', '--directory', type=Path, default=cwd, help='Workspace directory')
 	parser.set_defaults (func=partial (dohelp, parser))
 	subparsers = parser.add_subparsers ()
 
@@ -698,12 +708,12 @@ def main ():
 	parserShare.set_defaults(func=doshare)
 
 	parserCopy = subparsers.add_parser('copy', help='Copy workspace')
-	parserCopy.add_argument('dest', nargs='?', default=cwd, help='Destination directory')
+	parserCopy.add_argument('dest', nargs='?', default=cwd, type=Path, help='Destination directory')
 	parserCopy.set_defaults(func=docopy)
 
-	parserCopy = subparsers.add_parser('modify', help='Change workspace metadata')
-	parserCopy.add_argument('metadata', nargs='+', type=parseKV, help='Key-value pairs')
-	parserCopy.set_defaults(func=domodify)
+	parserModify = subparsers.add_parser('modify', help='Change workspace metadata')
+	parserModify.add_argument('metadata', nargs='+', type=parseKV, help='Key-value pairs')
+	parserModify.set_defaults(func=domodify)
 
 	args = parser.parse_args()
 	logformat = '{message}'
