@@ -225,14 +225,21 @@ def defaultRealm ():
 					return v
 	raise KeyError ()
 
-def run (cmd, stdout=None):
+class ExecutionFailed (Exception):
+	pass
+
+def run (cmd, stdout=None, permittedExitCodes=None):
 	verbose = logger.getEffectiveLevel () <= logging.DEBUG
 	# hide the ugly details from the user
 	if not stdout and not verbose:
 		stdout = subprocess.DEVNULL
 	stderr = None if verbose else subprocess.DEVNULL
 	logger.debug (f'running {cmd}')
-	return subprocess.run (cmd, stdout=stdout, stderr=stderr, check=True)
+	ret = subprocess.run (cmd, stdout=stdout, stderr=stderr)
+	permittedExitCodes = permittedExitCodes or [0]
+	if ret.returncode not in permittedExitCodes:
+		raise ExecutionFailed (ret.returncode)
+	return ret
 
 def setPermissions (group, bits, path: Path, remove=False, default=False, recursive=False):
 	""" ACL abstraction that supports NFS """
@@ -273,7 +280,7 @@ def setPermissions (group, bits, path: Path, remove=False, default=False, recurs
 	cmd.append (str (path))
 	try:
 		run (cmd)
-	except subprocess.CalledProcessError as e:
+	except ExecutionFailed as e:
 		logger.debug (e)
 		raise Exception ('cannot set permissions')
 
@@ -341,7 +348,7 @@ def initWorkspace (ws, verbose=False):
 			cmd.extend (['-C', ws.channelpath])
 		try:
 			run (cmd)
-		except (subprocess.CalledProcessError, KeyboardInterrupt):
+		except (ExecutionFailed, KeyboardInterrupt):
 			logger.error ('Failed to initialize guix')
 			raise
 
@@ -615,10 +622,10 @@ def copydir (source: Path, dest: Path):
 			'--links', # preserve symlinks
 			'--group', # preserve group
 			'--executability', # preserve execute bit
-			'--verbose',
 			# --sparse and --preallocate would be benefitial, but do not work on NFS
 			source, dest]
-	run (cmd)
+	# do not fail, if some files cannot be copied (23)
+	run (cmd, permittedExitCodes=[0, 23])
 
 def docopy (args):
 	try:
