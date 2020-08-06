@@ -4,6 +4,7 @@ from pathlib import Path
 from getpass import getuser
 from datetime import datetime
 from functools import partial
+from collections import defaultdict
 
 import yaml, pytz
 from unidecode import unidecode
@@ -292,6 +293,8 @@ def getPermissions (path: Path):
 		cmd = ['getfacl', path]
 		ret = run (cmd, stdout=subprocess.PIPE)
 		owner = None
+		meta = {}
+		perms = defaultdict (set)
 		for l in ret.stdout.decode ('ascii').split ('\n'):
 			if not l:
 				# empty, ignore
@@ -299,9 +302,9 @@ def getPermissions (path: Path):
 			elif l.startswith ('default:'):
 				# default permissions, ignore as well
 				continue
-			elif l.startswith ('# owner: '):
-				_, owner = l.split (':', 1)
-				owner = owner.strip ()
+			elif l.startswith ('#') and ':' in l:
+				k, v = l.split (':', 1)
+				meta[k.lstrip ('#').strip()] = v.strip()
 				continue
 			elif l.startswith ('#'):
 				# other comments, ignore
@@ -313,10 +316,13 @@ def getPermissions (path: Path):
 				raise
 			bits = ''.join (filter (lambda x: x != '-', bits))
 			if kind == 'group' and ident:
-				yield ident, bits
-			elif kind == 'user':
-				# use same attribute names as NFS4 for metadata change
-				yield owner, bits + 'tT'
+				perms[ident] = set (bits)
+			elif kind == 'user' and not ident:
+				perms[meta['owner']] = set (bits)
+		# XXX: this assumes every user has a group named after himself
+		perms[meta['owner']].update ('tT')
+		for k, v in perms.items ():
+			yield k, ''.join (v)
 
 def initWorkspace (ws, verbose=False):
 	# Fix permissions. Make sure the creator has default permissions, so files
