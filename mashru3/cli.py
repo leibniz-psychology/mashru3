@@ -504,11 +504,10 @@ def dorun (args):
 
 def dolist (args):
 	""" List workspaces """
-	searchPath = list (args.searchPath)
-	if args.directory:
-		searchPath.append (args.directory)
+	searchPath = set (map (lambda x: Path (x).resolve (), args.searchPath))
+	# if no search paths were given, use the operating directory instead
 	if not searchPath:
-		searchPath = [os.getcwd ()]
+		searchPath.add (args.directory.resolve ())
 	for d in searchPath:
 		logger.debug (f'searching directory {d} for workspaces')
 		for root, dirs, files in os.walk (d):
