@@ -46,10 +46,9 @@ Workspaces are simply directories with a certain structure. They contain
 Applications drop a freedesktop-compliant `.desktop`_ file into one of the
 ``XDG_DATA_DIRS``, usually ``~/.guix-profile/share/applications``, but
 ``~/.local/share/applications`` for user-supplied applications is supported as
-well. If the program has a web interface it must be proxied through
-conductor_, which is indicated by the two additional keys ``X-Conductor-Key`` and
-``X-Conductor-Socket`` in the ``.desktop`` file. The latter is tilde-expanded
-relative to the workspace directory.
+well. If the program has a web interface it must be proxied through conductor_,
+which is indicated by the additional key ``X-Conductor-Socket`` in the
+``.desktop`` file. It is tilde-expanded relative to the workspace directory.
 
 ``workspace run`` spawns a Guix container (i.e. Linux namespace) and mounts the
 workspace directory as homedir of the fake user ``joeuser``. Note that the UID

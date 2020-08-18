@@ -5,6 +5,8 @@ from getpass import getuser
 from datetime import datetime
 from functools import partial
 from collections import defaultdict
+from hashlib import blake2b
+from base64 import b32encode
 
 import yaml, pytz
 from unidecode import unidecode
@@ -460,22 +462,26 @@ def dorun (args):
 	try:
 		if entry:
 			execcmd = entry.get ('exec')
-			key = entry.get ('x-conductor-key')
+			socket = entry.get ('x-conductor-socket', None)
 		else:
 			execcmd = None
-			key = None
+			socket = None
 		cmd = []
-		if key:
+		if socket:
 			forest = args.forest
 			if not forest:
 				logger.error ('No remote forest set up.')
 				return 1
 			if args.user:
 				forest = f'{args.user}@{forest}'
-			socket = entry.get ('x-conductor-socket')
 			# tilde-expand is relative to homedir location inside container
 			if socket.startswith ('~/'):
 				socket = ws.directory / socket[2:]
+			# use short hash of the socket path to create unique url key. Note
+			# that digest_size must be chosen such that base32 does not append
+			# padding and it must be short enough not to overflow hostname
+			# limits (usually 64 characters).
+			key = b32encode (blake2b (str (socket).encode ('utf-8'), digest_size=10).digest ()).decode ('ascii').lower ()
 			cmd += ['conductor',
 					'-k', key,
 					'-r', # replace
