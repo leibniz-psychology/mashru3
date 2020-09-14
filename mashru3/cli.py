@@ -265,8 +265,7 @@ def setPermissions (group, bits, path: Path, remove=False, default=False, recurs
 		bits = f'A:{flags}:{bits}'
 		cmd.append (bits)
 	else:
-		# do not change mask on files, so bits=rwx won’t set x on ordinary files
-		cmd = ['setfacl', '-n']
+		cmd = ['setfacl']
 		if recursive:
 			cmd.append ('-R')
 		if remove:
@@ -336,7 +335,7 @@ def getPermissions (path: Path):
 def initWorkspace (ws, verbose=False):
 	# Fix permissions. Make sure the creator has default permissions, so files
 	# created by other users are accessible by default. 
-	setPermissions (getuser (), 'rwx', ws.directory, default=True, recursive=True)
+	setPermissions (getuser (), 'rwX', ws.directory, default=True, recursive=True)
 
 	# get a fresh guix unless it already exists
 	if not ws.guixbin.exists ():
@@ -577,12 +576,12 @@ def doshare (args):
 		return 2
 
 	if args.write:
-		bits = 'rwx'
+		bits = 'rwX'
 		# this tool cannot handle files created by other users, because only
 		# the owner can setfacl them
 		logger.warning ('You should only enable write mode if you know what you are doing.')
 	else:
-		bits = 'rx'
+		bits = 'rX'
 
 	for g in args.groups:
 		# change all current files’s permissions
@@ -604,7 +603,7 @@ def doshare (args):
 				# only grant read/search permissions
 				assert os.path.isdir (p), f'{p} is not a directory'
 				try:
-					setPermissions (g, 'rx', p, recursive=False)
+					setPermissions (g, 'rX', p, recursive=False)
 				except Exception as e:
 					logger.debug (f'Cannot set permissions on parent directory {p}')
 		else:
