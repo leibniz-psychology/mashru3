@@ -7,6 +7,7 @@ from functools import partial
 from collections import defaultdict
 from hashlib import blake2b
 from base64 import b32encode
+from fnmatch import fnmatchcase
 
 import yaml, pytz
 from unidecode import unidecode
@@ -520,8 +521,34 @@ def dorun (args):
 
 	return ret
 
+def getattrRecursive (obj, name):
+	"""
+	Recursive version of getattr, which splits name at dots and recurses
+	"""
+	def getattrOrGetitem (obj, name):
+		try:
+			return getattr (obj, name)
+		except AttributeError:
+			return obj[name]
+
+	try:
+		thisName, other = name.split ('.', 1)
+		return getattrRecursive (getattrOrGetitem(obj, thisName), other)
+	except ValueError:
+		return getattrOrGetitem (obj, name)
+
 def dolist (args):
 	""" List workspaces """
+	# load ignored projects
+	ignored = set ()
+	for path in args.ignore:
+		if os.path.exists (path):
+			with open (path) as fd:
+				try:
+					ignored.update (yaml.safe_load (fd))
+				except TypeError:
+					pass
+
 	searchPath = set (map (lambda x: Path (x).resolve (), args.searchPath))
 	# if no search paths were given, use the operating directory instead
 	if not searchPath:
@@ -531,7 +558,20 @@ def dolist (args):
 		for root, dirs, files in os.walk (d):
 			try:
 				ws = Workspace.open (root)
-				if args.format == Formatter.HUMAN:
+
+				# check if ignored
+				ignoreWorkspace = False
+				for i in ignored:
+					kind, pattern = map (str.strip, i.split (':', 1))
+					v = getattrRecursive (ws, kind)
+					logger.debug (f'matching {kind} {pattern} {v}')
+					if fnmatchcase (v, pattern):
+						ignoreWorkspace = True
+						break
+
+				if ignoreWorkspace:
+					pass
+				elif args.format == Formatter.HUMAN:
 					print (f'{ws.directory}: {ws.metadata["name"]}')
 				elif args.format == Formatter.YAML:
 					yaml.dump (ws.toDict (), sys.stdout)
@@ -676,6 +716,31 @@ def domodify (args):
 
 	return 0
 
+def doignore (args):
+	"""
+	Add workspace to locally ignored workspaces
+	"""
+
+	try:
+		ws = Workspace.open (args.directory)
+	except WorkspaceException:
+		logger.error (f'{source} is not a valid workspace')
+		return 1
+
+	ignored = []
+	if os.path.exists (args.ignore):
+		with open (args.ignore) as fd:
+			ignored = yaml.safe_load (fd)
+			if not isinstance (ignored, list):
+				ignored = []
+	ignored = set (ignored)
+	ignored.add (f'metadata._id:{ws.metadata["_id"]}')
+	os.makedirs (os.path.dirname (args.ignore), exist_ok=True)
+	with open (args.ignore, 'w') as fd:
+		yaml.dump (list (ignored), fd)
+
+	return 0
+
 def dohelp (parser, args):
 	parser.print_usage ()
 	return 1
@@ -715,6 +780,11 @@ def main ():
 	parserList.add_argument('-s', '--search-path', dest='searchPath',
 			default=[], action='append', help='User')
 	parserList.add_argument('-a', '--all', action='store_true', help='Search hidden directories')
+	parserList.add_argument('-i', '--ignore', action='append',
+			default=['/etc/' + __package__ + '/ignore.yaml', # system default
+					os.path.expanduser ('~/.config/' + __package__ + '/ignore.yaml'), # user default
+					],
+			help='File with ignored projects')
 	parserList.set_defaults(func=dolist)
 
 	parserShare = subparsers.add_parser('share', help='Share workspace with other users')
@@ -731,6 +801,12 @@ def main ():
 	parserModify = subparsers.add_parser('modify', help='Change workspace metadata')
 	parserModify.add_argument('metadata', nargs='+', type=parseKV, help='Key-value pairs')
 	parserModify.set_defaults(func=domodify)
+
+	parserIgnore = subparsers.add_parser('ignore', help='Ignore workspace')
+	parserIgnore.add_argument('-i', '--ignore',
+			default=os.path.expanduser ('~/.config/' + __package__ + '/ignore.yaml'), # user default
+			help='File with ignored projects')
+	parserIgnore.set_defaults(func=doignore)
 
 	args = parser.parse_args()
 	logformat = '{message}'
