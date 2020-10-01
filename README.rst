@@ -47,8 +47,9 @@ Applications drop a freedesktop-compliant `.desktop`_ file into one of the
 ``XDG_DATA_DIRS``, usually ``~/.guix-profile/share/applications``, but
 ``~/.local/share/applications`` for user-supplied applications is supported as
 well. If the program has a web interface it must be proxied through conductor_,
-which is indicated by the additional key ``X-Conductor-Socket`` in the
-``.desktop`` file. It is tilde-expanded relative to the workspace directory.
+which is indicated by the interface ``org.leibniz-psychology.org.conductor.vX``
+specified in the ``.desktop`` file. Version 1 requires commands to accept the
+argument ``-s <socketpath>`` and listen on ``socketpath``.
 
 ``workspace run`` spawns a Guix container (i.e. Linux namespace) and mounts the
 workspace directory as homedir of the fake user ``joeuser``. Note that the UID

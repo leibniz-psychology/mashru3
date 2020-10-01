@@ -1,4 +1,5 @@
-import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, json, secrets, stat, random
+import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, \
+		json, secrets, stat, random, tempfile
 from enum import Enum, auto, Flag
 from pathlib import Path
 from getpass import getuser
@@ -462,21 +463,23 @@ def dorun (args):
 	try:
 		if entry:
 			execcmd = entry.get ('exec')
-			socket = entry.get ('x-conductor-socket', None)
+			interfaces = set (entry.get ('interfaces', '').split (','))
+			logger.debug (f'desktop file has interfaces {interfaces}')
+			isConductorApp = 'org.leibniz-psychology.conductor.v1' in interfaces
 		else:
 			execcmd = None
-			socket = None
 		cmd = []
-		if socket:
+		socketDir = None
+		socket = None
+		if isConductorApp:
 			forest = args.forest
 			if not forest:
 				logger.error ('No remote forest set up.')
 				return 1
 			if args.user:
 				forest = f'{args.user}@{forest}'
-			# tilde-expand is relative to homedir location inside container
-			if socket.startswith ('~/'):
-				socket = ws.directory / socket[2:]
+			socketDir = tempfile.TemporaryDirectory (prefix=__package__)
+			socket = Path (socketDir.name) / '.conductor-socket'
 			# use short hash of the socket path to create unique url key. Note
 			# that digest_size must be chosen such that base32 does not append
 			# padding and it must be short enough not to overflow hostname
@@ -492,9 +495,16 @@ def dorun (args):
 			if args.verbose:
 				cmd.insert (1, '-v')
 		cmd += ws.envcmd
+		# the app creates the socket, so the entire directory must be shared,
+		# not just exposed.
+		if socketDir:
+			cmd.append (f'--share={socketDir.name}')
 		if execcmd:
 			cmd.append ('--')
 			cmd.extend (shlex.split (execcmd))
+			# The -s argument is part of the .v1 interface.
+			if socket:
+				cmd.extend (['-s', str (socket)])
 		logger.debug (' '.join (cmd))
 
 		if args.dryRun:
@@ -515,6 +525,8 @@ def dorun (args):
 			ret = p.wait ()
 		logger.debug (f'program returned {ret}')
 	finally:
+		if socketDir:
+			socketDir.cleanup ()
 		# restore symlink if it does not exist any more
 		if not profileLink.exists ():
 			profileLink.symlink_to (linkDest)
