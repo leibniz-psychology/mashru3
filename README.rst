@@ -41,7 +41,24 @@ Workspaces are simply directories with a certain structure. They contain
 2) a Guix channel description (``~/.config/guix/channels.scm``), pinning it to
    a fixed commit and a manifest with installed packages
    (``~/.config/guix/manifest.scm``)
-3) metadata like name, description, …
+3) metadata (``~/.config/workspace.yaml``). The following fields are currently
+   in use:
+
+   version
+     Metadata version, currently ``1``.
+   _id
+     Unique ID for the workspace. Makes sure a project can be tracked
+     regardless of its location on the filesystem.
+   created
+     Date and time the workspace was initially created.
+   modified
+     Date and time the workspace was modified last.
+   creator
+     String identifying the user who initially created the workspace.
+   name
+     Name or title for the workspace.
+   description
+     Long description text for the workspace.
 
 Applications drop a freedesktop-compliant `.desktop`_ file into one of the
 ``XDG_DATA_DIRS``, usually ``~/.guix-profile/share/applications``, but
