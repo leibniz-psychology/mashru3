@@ -145,7 +145,7 @@ class Workspace:
 		"""
 
 		channelPath = self.channelpath
-		channelMtime = channelPath.stat ().st_mtime
+		channelMtime = channelPath.stat ().st_mtime if channelPath.exists () else 0
 
 		guixbin = self.guixbin
 		guixbinExists = guixbin.exists ()
