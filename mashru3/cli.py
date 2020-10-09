@@ -1,5 +1,5 @@
 import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, \
-		json, secrets, stat, random, tempfile
+		json, secrets, stat, random, tempfile, traceback, time
 from enum import Enum, auto, Flag
 from pathlib import Path
 from getpass import getuser
@@ -127,7 +127,6 @@ class Workspace:
 				'environment', '-C', '-N',
 				'-u', user,
 				'-E', '^LANG$', # allow passing the current language
-				'-P',
 				'--no-cwd',
 				f'--share={self.directory}=/home/{user}',
 				]
@@ -138,13 +137,87 @@ class Workspace:
 			cmd.extend (['--ad-hoc', 'coreutils'])
 		return cmd
 
+	def ensureGuix (self):
+		"""
+		Ensure the guix binary matches the channel file.
+
+		Usually calling .ensureProfile() is enough.
+		"""
+
+		channelPath = self.channelpath
+		channelMtime = channelPath.stat ().st_mtime
+
+		guixbin = self.guixbin
+		guixbinExists = guixbin.exists ()
+		profilePath = self.guixdir / 'current'
+		profileMtime = profilePath.lstat().st_mtime if guixbinExists else 0
+
+		# This should work most of the time™
+		if not guixbinExists or channelMtime > profileMtime:
+			logger.debug (f'Getting a fresh guix, exists {guixbin.exists()}, mtime {channelMtime} >? {profileMtime}')
+			os.makedirs (self.guixdir, exist_ok=True)
+			# Use host guix to bootstrap workspace.
+			cmd = ['guix', 'pull',
+					'-p', str (profilePath),
+					]
+			# use channel file from skeleton instead of system default if it exists
+			if os.path.isfile (channelPath):
+				cmd.extend (['-C', str (channelPath)])
+			try:
+				run (cmd)
+			except (ExecutionFailed, KeyboardInterrupt):
+				logger.error ('Failed to initialize guix')
+				raise
+
+		# pin guix version, so copying the project will use the exact same version
+		tmpChannelPath = str (channelPath) + '.tmp'
+		with open (tmpChannelPath, 'w') as fd:
+			cmd = [str (guixbin), 'describe', '-f', 'channels']
+			run (cmd, stdout=fd)
+		# fix mtime. Otherwise the Guix profile would be refreshed everytime we
+		# run.
+		os.utime (tmpChannelPath, times=(profileMtime, profileMtime))
+		# atomic overwrite
+		os.rename (tmpChannelPath, channelPath)
+
+	def ensureProfile (self):
+		""" Ensure the profile directory .guix-profile exists and matches the current manifest and guix """
+		# we need a runnable guix
+		self.ensureGuix ()
+
+		guixprofilePath = self.guixdir / 'current'
+		guixprofileMtime = guixprofilePath.lstat().st_mtime
+
+		profilePath = self.profilepath
+		profileExists = profilePath.exists ()
+		profileMtime = profilePath.lstat ().st_mtime if profileExists else 0
+
+		manifestPath = self.manifestpath
+		manifestExists = manifestPath.exists ()
+		manifestMtime = manifestPath.stat ().st_mtime if manifestExists else 0
+
+		if not profileExists or manifestMtime > profileMtime or guixprofileMtime > profileMtime:
+			logger.debug (f'Refreshing profile, exists {profilePath.exists()}, '
+					f'mtime {manifestMtime} >? {profileMtime}, '
+					f'guixmtime {guixprofileMtime} >? {profileMtime}')
+			cmd = [str (self.guixbin), 'package',
+					'-m', str (manifestPath),
+					'-p', str (profilePath),
+					'--allow-collisions',
+					]
+			run (cmd)
+			# Guix can decide there is nothing to do and will not change the
+			# symlinks. Make sure we don’t run this again.
+			now = time.time ()
+			os.utime (profilePath, times=(now, now), follow_symlinks=False)
+
 	@classmethod
 	def open (cls, d: Path):
 		"""
 		Verify directory d is a valid workspace and get its metadata
 		"""
 		ws = cls (d)
-		checkfiles = [ws.guixbin, ws.metapath]
+		checkfiles = [ws.metapath, ]
 		if all (map (lambda x: x.exists (), checkfiles)):
 			with open (ws.metapath) as fd:
 				ws.metadata = yaml.safe_load (fd)
@@ -339,38 +412,9 @@ def initWorkspace (ws, verbose=False):
 	# created by other users are accessible by default. 
 	setPermissions (getuser (), 'rwX', ws.directory, default=True, recursive=True)
 
-	# get a fresh guix unless it already exists
-	if not ws.guixbin.exists ():
-		logger.debug (f'Getting a fresh guix')
-		os.makedirs (ws.guixdir, exist_ok=True)
-		cmd = ['guix', 'pull',
-				'-p', str (ws.guixdir / 'current'),
-				]
-		# use channel file from skeleton instead of system default if it exists
-		if os.path.isfile (ws.channelpath):
-			cmd.extend (['-C', ws.channelpath])
-		try:
-			run (cmd)
-		except (ExecutionFailed, KeyboardInterrupt):
-			logger.error ('Failed to initialize guix')
-			raise
-
-	# pin guix version, so copying the project will use the exact same version
-	tmpChannelPath = str (ws.channelpath) + '.tmp'
-	with open (tmpChannelPath, 'w') as fd:
-		cmd = [str (ws.guixbin), 'describe', '-f', 'channels']
-		run (cmd, stdout=fd)
-	os.rename (tmpChannelPath, ws.channelpath)
+	ws.ensureProfile ()
 
 	ws.writeMetadata ()
-
-	# create symlink ~/.guix-profile, so apps can be found (unless
-	# pre-initialized)
-	if not ws.profilepath.exists ():
-		cmd = ws.envcmd
-		# don’t actually enter environment
-		cmd.extend (['--', 'true'])
-		run (cmd)
 
 	return True
 
@@ -410,6 +454,8 @@ def docreate (args):
 		return 0
 	except Exception as e:
 		logger.error (f'Creating workspace failed: {e}')
+		if args.verbose:
+			traceback.print_exc ()
 		#shutil.rmtree (ws.directory)
 
 	return 1
@@ -418,6 +464,7 @@ def dorun (args):
 	""" Run program inside workspace """
 
 	ws = Workspace.open (args.directory)
+	ws.ensureProfile ()
 
 	# find the application requested
 	matches = []
@@ -450,15 +497,6 @@ def dorun (args):
 			logger.error (m.get ('name'))
 		return 1
 	entry = matches[0]
-
-	# `guix environment -P` does not work if the symlink already exists
-	profileLink = ws.directory / '.guix-profile'
-	if profileLink.is_symlink ():
-		linkDest = os.readlink (profileLink)
-		profileLink.unlink ()
-	elif profileLink.exists ():
-		logger.error (f'{profileLink} is not a symlink')
-		return 1
 
 	try:
 		if entry:
@@ -527,9 +565,6 @@ def dorun (args):
 	finally:
 		if socketDir:
 			socketDir.cleanup ()
-		# restore symlink if it does not exist any more
-		if not profileLink.exists ():
-			profileLink.symlink_to (linkDest)
 
 	return ret
 
@@ -680,6 +715,7 @@ def copydir (source: Path, dest: Path):
 			'--group', # preserve group
 			'--executability', # preserve execute bit
 			# --sparse and --preallocate would be benefitial, but do not work on NFS
+			'--times', # preserve mtime
 			source, dest]
 	# do not fail, if some files cannot be copied (23)
 	run (cmd, permittedExitCodes=[0, 23])
