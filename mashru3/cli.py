@@ -126,7 +126,9 @@ class Workspace:
 		cmd = [str (self.guixbin),
 				'environment', '-C', '-N',
 				'-u', user,
-				'-E', '^LANG$', # allow passing the current language
+				# allow passing the current language, assume GUIX_LOCPATH is
+				# set properly before starting
+				'-E', '^(LANG|GUIX_LOCPATH)$',
 				'--no-cwd',
 				f'--share={self.directory}=/home/{user}',
 				]
@@ -549,6 +551,8 @@ def dorun (args):
 			print (' '.join (map (shlex.quote, cmd)))
 			return 0
 
+		# set a proper locpath
+		os.environ['GUIX_LOCPATH'] = '/home/joeuser/.guix-profile/lib/locale'
 		try:
 			p = subprocess.Popen (cmd)
 			p.wait ()
