@@ -388,6 +388,9 @@ def setPermissions (group, bits, path: Path, remove=False, default=False, recurs
 
 def getPermissions (path: Path):
 	if isNfs (path):
+		# this codepath is currently not tested
+		raise NotImplementedError ('untested')
+
 		cmd = ['nfs4_getfacl', path]
 		ret = run (cmd, stdout=subprocess.PIPE)
 		for l in ret.stdout.decode ('ascii').split ('\n'):
@@ -402,6 +405,7 @@ def getPermissions (path: Path):
 		cmd = ['getfacl', path]
 		ret = run (cmd, stdout=subprocess.PIPE)
 		owner = None
+		myself = getuser ()
 		meta = {}
 		perms = defaultdict (set)
 		for l in ret.stdout.decode ('ascii').split ('\n'):
@@ -425,9 +429,13 @@ def getPermissions (path: Path):
 				raise
 			bits = ''.join (filter (lambda x: x != '-', bits))
 			if kind == 'group' and ident:
-				perms[ident] = set (bits)
+				perms[ident].update (bits)
 			elif kind == 'user' and not ident:
-				perms[meta['owner']] = set (bits)
+				perms[meta['owner']].update (bits)
+			elif kind == 'other' and not ident:
+				# Even if we’re not mentioned explicitly anywhere, other bits
+				# affect our permissions. (Assuming additive.)
+				perms[myself].update (bits)
 		# XXX: this assumes every user has a group named after himself
 		perms[meta['owner']].update ('tT')
 		for k, v in perms.items ():
