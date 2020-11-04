@@ -240,10 +240,14 @@ class Workspace:
 		"""
 		ws = cls (d)
 		checkfiles = [ws.metapath, ]
-		if all (map (lambda x: x.exists (), checkfiles)):
-			with open (ws.metapath) as fd:
-				ws.metadata = yaml.safe_load (fd)
-				return ws
+		try:
+			if all (map (lambda x: x.exists (), checkfiles)):
+				with open (ws.metapath) as fd:
+					ws.metadata = yaml.safe_load (fd)
+					return ws
+		except PermissionError:
+			# .exists() call .stat(), which can fail
+			pass
 		raise InvalidWorkspace ()
 
 	@classmethod
