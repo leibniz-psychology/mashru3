@@ -46,10 +46,12 @@ class Formatter (Enum):
 	JSON = auto ()
 
 class Encoder (json.JSONEncoder):
-    def default (self, obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat ()
-        return json.JSONEncoder.default (self, obj)
+	def default (self, obj):
+		if isinstance(obj, datetime):
+			return obj.isoformat ()
+		elif isinstance (obj, Path):
+			return str (obj)
+		return json.JSONEncoder.default (self, obj)
 
 def jsonDump (o, fd=None):
 	return json.dump (o, fd, cls=Encoder)
@@ -452,17 +454,20 @@ def initWorkspace (ws, verbose=False):
 
 	return True
 
-def formatWorkspace (args, ws):
+def formatResult (args, r, human=''):
 	if args.format == Formatter.HUMAN:
-		print (ws.directory)
+		print (human)
 	elif args.format == Formatter.YAML:
-		yaml.dump (ws.toDict (), sys.stdout)
+		yaml.dump (r, sys.stdout)
 		sys.stdout.write ('---\n')
 	elif args.format == Formatter.JSON:
-		jsonDump (ws.toDict (), sys.stdout)
+		jsonDump (r, sys.stdout)
 		sys.stdout.write ('\n')
 	else:
 		assert False
+
+def formatWorkspace (args, ws):
+	formatResult (args, ws.toDict (), f'{ws.directory}')
 
 def docreate (args):
 	ws = Workspace.create (args.directory, dict (name=' '.join (args.name)))
@@ -504,16 +509,7 @@ def dorun (args):
 	matches = []
 	for entry in sorted (ws.applications, key=lambda x: x.get ('name').lower ()):
 		if not args.application:
-			if args.format == Formatter.HUMAN:
-				print (entry.get ('name'))
-			elif args.format == Formatter.YAML:
-				yaml.dump (dict (entry), sys.stdout)
-				sys.stdout.write ('---\n')
-			elif args.format == Formatter.JSON:
-				jsonDump (dict (entry), sys.stdout)
-				sys.stdout.write ('\n')
-			else:
-				assert False
+			formatResult (args, dict (entry), entry.get ('name'))
 		elif args.application.lower() in entry.get ('name').lower () or \
 				args.application.lower () == entry.get ('_id').lower ():
 			matches.append (entry)
@@ -652,18 +648,8 @@ def dolist (args):
 						ignoreWorkspace = True
 						break
 
-				if ignoreWorkspace:
-					pass
-				elif args.format == Formatter.HUMAN:
-					print (f'{ws.directory}: {ws.metadata["name"]}')
-				elif args.format == Formatter.YAML:
-					yaml.dump (ws.toDict (), sys.stdout)
-					sys.stdout.write ('---\n')
-				elif args.format == Formatter.JSON:
-					jsonDump (ws.toDict (), sys.stdout)
-					sys.stdout.write ('\n')
-				else:
-					assert False
+				if not ignoreWorkspace:
+					formatResult (args, ws.toDict (), f'{ws.directory}: {ws.metadata["name"]}')
 			except InvalidWorkspace:
 				pass
 
