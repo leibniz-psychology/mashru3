@@ -36,6 +36,9 @@ from unidecode import unidecode
 from .uid import uintToQuint
 
 logger = logging.getLogger ('cli')
+ZIP_PROGRAM = 'zip'
+TAR_PROGRAM = 'tar'
+LZIP_PROGRAM = 'lzip'
 
 def now ():
 	return datetime.now (tz=pytz.utc)
@@ -252,6 +255,18 @@ class Workspace:
 			pass
 		raise InvalidWorkspace ()
 
+	@staticmethod
+	def nameToPath (name):
+		# use lowercase, unicode-stripped name as directory. Special characters
+		# are replaced by underscore, but no more than one successive
+		# underscore and not at the beginning or the end.
+		r = re.compile (r'[^a-z0-9]+')
+		subdir = r.sub ('_', unidecode (name.lower ())).strip ('_')
+		if not subdir:
+			# simply generate one
+			subdir = 'unnamed_project'
+		return subdir
+
 	@classmethod
 	def create (cls, suggestedDir: Path, metadataOverride):
 		stamp = now ()
@@ -261,16 +276,8 @@ class Workspace:
 		if suggestedDir.exists ():
 			if suggestedDir.is_dir ():
 				# if no dir is given, create one based on the name
-				# use lowercase, unicode-stripped name as directory. Special characters are
-				# replaced by underscore, but no more than one successive underscore and
-				# not at the beginning or the end.
-				r = re.compile (r'[^a-z0-9]+')
 				name = metadata.get ('name', '')
-				subdir = r.sub ('_', unidecode (name.lower ())).strip ('_')
-				if not subdir:
-					# simply generate one
-					subdir = 'unnamed_project'
-
+				subdir = cls.nameToPath (name)
 				ext = ''
 				while True:
 					directory = suggestedDir / (subdir + ext)
@@ -811,6 +818,92 @@ def doignore (args):
 
 	return 0
 
+def doexport (args):
+	try:
+		ws = Workspace.open (args.directory)
+	except WorkspaceException:
+		logger.error (f'{args.directory} is not a valid workspace')
+		return 1
+
+	if args.output.exists () and not args.output.is_dir ():
+		logger.error (f'Output file {args.output} exists.')
+		return 1
+
+	# resolve before chdir’ing
+	output = args.output.resolve ()
+	if args.output.is_dir ():
+		# choose a name ourselves
+		base = output
+		fileExt = {'zip': 'zip', 'tar+lzip': 'tar.lz'}[args.kind]
+		ext = ''
+		while True:
+			output = base / f'{ws.nameToPath (ws.metadata["name"])}{ext}.{fileExt}'
+			if not output.exists ():
+				break
+			ext = f'_{secrets.randbelow (2**64)}'
+
+	excludePattern = [
+			'.config/guix/current*',
+			'.guix-profile*',
+			'.cache/**',
+			'.rstudio/sessions/**',
+			'.JASP/temp/**', # JASP should be fixed to use .cache or /tmp
+			]
+	# use temp directory on the same mount, so we can easily do a rename
+	# instead of copying
+	tempDir = output.parent
+	if args.format == 'zip':
+		with tempfile.TemporaryDirectory (dir=tempDir) as tempDir:
+			tempArchive = Path (tempDir) / 'output.zip'
+			logger.debug (f'using temporary file {tempArchive}')
+			os.chdir (ws.directory)
+
+			cmd = [ZIP_PROGRAM]
+			for p in excludePattern:
+				cmd.extend (['-x', p])
+			if not args.verbose:
+				cmd.append ('--quiet')
+			cmd.extend ([
+					'-y', # do not follow symlinks
+					'-r', # recursive
+					tempArchive, # output
+					'.', # input
+					])
+
+			run (cmd)
+			os.rename (tempArchive, output)
+			print (args.output)
+			return 0
+	elif args.format == 'tar+lzip':
+		with tempfile.TemporaryDirectory (dir=tempDir) as tempDir:
+			tempArchive = Path (tempDir) / 'output.tar.lz'
+			# tarballs include the directory name by convention, so chdir to
+			# the parent and use .name as input
+			os.chdir (ws.directory.parent)
+
+			cmd = [TAR_PROGRAM,
+					f'--use-compress-program={LZIP_PROGRAM}',
+					# reset owner and group info
+					'--owner=joeuser:1000',
+					'--group=joeuser:1000',
+					'--no-acls', # no acls
+					'-c', # create
+					'-f', tempArchive, # output
+					]
+			base = ws.directory.name
+			for p in excludePattern:
+				cmd.append(f'--exclude={base}/{p}')
+			if args.verbose:
+				cmd.append ('--verbose')
+			cmd.append (base) # input
+
+			run (cmd)
+			os.rename (tempArchive, output)
+			print (args.output)
+			return 0
+	else:
+		raise NotImplementedError ()
+
 def dohelp (parser, args):
 	parser.print_usage ()
 	return 1
@@ -877,6 +970,11 @@ def main ():
 			default=os.path.expanduser ('~/.config/' + __package__ + '/ignore.yaml'), # user default
 			help='File with ignored projects')
 	parserIgnore.set_defaults(func=doignore)
+
+	parserExport = subparsers.add_parser('export', help='Export workspace files or metadata')
+	parserExport.add_argument ('format', choices=('zip', 'tar+lzip'), help='Export format')
+	parserExport.add_argument ('output', type=Path, help='Output file')
+	parserExport.set_defaults(func=doexport)
 
 	args = parser.parse_args()
 	logformat = '{message}'
