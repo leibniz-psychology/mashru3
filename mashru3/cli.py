@@ -852,7 +852,7 @@ def doexport (args):
 	# use temp directory on the same mount, so we can easily do a rename
 	# instead of copying
 	tempDir = output.parent
-	if args.format == 'zip':
+	if args.kind == 'zip':
 		with tempfile.TemporaryDirectory (dir=tempDir) as tempDir:
 			tempArchive = Path (tempDir) / 'output.zip'
 			logger.debug (f'using temporary file {tempArchive}')
@@ -872,9 +872,9 @@ def doexport (args):
 
 			run (cmd)
 			os.rename (tempArchive, output)
-			print (args.output)
+			formatResult (args, dict (path=output), output)
 			return 0
-	elif args.format == 'tar+lzip':
+	elif args.kind == 'tar+lzip':
 		with tempfile.TemporaryDirectory (dir=tempDir) as tempDir:
 			tempArchive = Path (tempDir) / 'output.tar.lz'
 			# tarballs include the directory name by convention, so chdir to
@@ -899,7 +899,7 @@ def doexport (args):
 
 			run (cmd)
 			os.rename (tempArchive, output)
-			print (args.output)
+			formatResult (args, dict (path=output), output)
 			return 0
 	else:
 		raise NotImplementedError ()
@@ -972,7 +972,7 @@ def main ():
 	parserIgnore.set_defaults(func=doignore)
 
 	parserExport = subparsers.add_parser('export', help='Export workspace files or metadata')
-	parserExport.add_argument ('format', choices=('zip', 'tar+lzip'), help='Export format')
+	parserExport.add_argument ('kind', choices=('zip', 'tar+lzip'), help='Export format')
 	parserExport.add_argument ('output', type=Path, help='Output file')
 	parserExport.set_defaults(func=doexport)
 
