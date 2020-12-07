@@ -34,6 +34,7 @@ import yaml, pytz
 from unidecode import unidecode
 
 from .uid import uintToQuint
+from .krb5 import defaultRealm
 
 logger = logging.getLogger ('cli')
 ZIP_PROGRAM = 'zip'
@@ -322,23 +323,6 @@ def getMount (path):
 def isNfs (path):
 	""" Check whether a path is on an NFS mount """
 	return getMount (getMountPoint (path))['kind'].startswith ('nfs')
-
-def defaultRealm ():
-	# cannot use configparser (does not support brackets) or
-	# krb5_get_default_realm() (no python bindings?)
-	section = None
-	with open ('/etc/krb5.conf') as fd:
-		for l in fd:
-			l = l.strip ()
-			if l.startswith ('[') and l.endswith (']'):
-				section = l[1:-1].strip ()
-			elif '=' in l:
-				k, v = l.split ('=', 1)
-				k = k.strip ()
-				v = v.strip ()
-				if k == 'default_realm':
-					return v
-	raise KeyError ()
 
 class ExecutionFailed (Exception):
 	pass
