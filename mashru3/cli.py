@@ -228,15 +228,18 @@ class Workspace:
 					f'mtime {manifestMtime} >? {profileMtime}, '
 					f'guixmtime {guixprofileMtime} >? {profileMtime}')
 			cmd = [str (self.guixbin), 'package',
-					'-m', str (manifestPath),
 					'-p', str (profilePath),
 					'--allow-collisions',
 					]
+			if manifestExists:
+				cmd.extend (['-m', str (manifestPath)])
 			run (cmd)
-			# Guix can decide there is nothing to do and will not change the
-			# symlinks. Make sure we don’t run this again.
-			now = time.time ()
-			os.utime (profilePath, times=(now, now), follow_symlinks=False)
+			if profilePath.exists ():
+				# Guix can decide there is nothing to do and will not change
+				# the symlinks. Make sure we don’t run this again by setting a
+				# new c/mtime.
+				now = time.time ()
+				os.utime (profilePath, times=(now, now), follow_symlinks=False)
 
 	@classmethod
 	def open (cls, d: Path):
