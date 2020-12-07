@@ -35,6 +35,7 @@ from unidecode import unidecode
 
 from .uid import uintToQuint
 from .krb5 import defaultRealm
+from .util import getattrRecursive, prefixes, isPrefix
 
 logger = logging.getLogger ('cli')
 ZIP_PROGRAM = 'zip'
@@ -594,22 +595,6 @@ def dorun (args):
 
 	return ret
 
-def getattrRecursive (obj, name):
-	"""
-	Recursive version of getattr, which splits name at dots and recurses
-	"""
-	def getattrOrGetitem (obj, name):
-		try:
-			return getattr (obj, name)
-		except AttributeError:
-			return obj[name]
-
-	try:
-		thisName, other = name.split ('.', 1)
-		return getattrRecursive (getattrOrGetitem(obj, thisName), other)
-	except ValueError:
-		return getattrOrGetitem (obj, name)
-
 def dolist (args):
 	""" List workspaces """
 	# load ignored projects
@@ -653,19 +638,6 @@ def dolist (args):
 				for df in dotfiles:
 					logger.debug (f'removing {df} from search tree')
 					dirs.remove (df)
-
-def prefixes (l):
-	""" Get all prefixes for list l, i.e. [1, 2, 3] → [1], [1, 2], [1, 2, 3] """
-	p = []
-	for e in l:
-		p.append (e)
-		yield list (p)
-
-def isPrefix (a, b):
-	""" Return true if a is prefix of b """
-	if len (a) > len (b):
-		return False
-	return all (map (lambda x: x[0] == x[1], zip (a, b)))
 
 def doshare (args):
 	""" Share a workspace with a (user) group """
