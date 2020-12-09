@@ -32,6 +32,7 @@ from fnmatch import fnmatchcase
 
 import yaml, pytz
 from unidecode import unidecode
+import magic
 
 from .uid import uintToQuint
 from .krb5 import defaultRealm
@@ -39,6 +40,7 @@ from .util import getattrRecursive, prefixes, isPrefix
 
 logger = logging.getLogger ('cli')
 ZIP_PROGRAM = 'zip'
+UNZIP_PROGRAM = 'unzip'
 TAR_PROGRAM = 'tar'
 LZIP_PROGRAM = 'lzip'
 
@@ -261,7 +263,7 @@ class Workspace:
 		raise InvalidWorkspace ()
 
 	@staticmethod
-	def nameToPath (name):
+	def nameToDir (name):
 		# use lowercase, unicode-stripped name as directory. Special characters
 		# are replaced by underscore, but no more than one successive
 		# underscore and not at the beginning or the end.
@@ -273,16 +275,11 @@ class Workspace:
 		return subdir
 
 	@classmethod
-	def create (cls, suggestedDir: Path, metadataOverride):
-		stamp = now ()
-		metadata = dict (created=stamp, modified=stamp, creator=getuser ())
-		metadata.update (metadataOverride)
-
+	def nameToPath (cls, name, suggestedDir):
 		if suggestedDir.exists ():
 			if suggestedDir.is_dir ():
 				# if no dir is given, create one based on the name
-				name = metadata.get ('name', '')
-				subdir = cls.nameToPath (name)
+				subdir = cls.nameToDir (name)
 				ext = ''
 				while True:
 					directory = suggestedDir / (subdir + ext)
@@ -295,6 +292,16 @@ class Workspace:
 		else:
 			# use as-as
 			directory = suggestedDir
+
+		return directory
+
+	@classmethod
+	def create (cls, suggestedDir: Path, metadataOverride):
+		stamp = now ()
+		metadata = dict (created=stamp, modified=stamp, creator=getuser ())
+		metadata.update (metadataOverride)
+
+		directory = cls.nameToPath (metadata.get ('name', ''), suggestedDir)
 
 		return cls (directory, metadata)
 
@@ -796,7 +803,7 @@ def doexport (args):
 		fileExt = {'zip': 'zip', 'tar+lzip': 'tar.lz'}[args.kind]
 		ext = ''
 		while True:
-			output = base / f'{ws.nameToPath (ws.metadata["name"])}{ext}.{fileExt}'
+			output = base / f'{ws.nameToDir (ws.metadata["name"])}{ext}.{fileExt}'
 			if not output.exists ():
 				break
 			ext = f'_{secrets.randbelow (2**64)}'
@@ -862,6 +869,67 @@ def doexport (args):
 			return 0
 	else:
 		raise NotImplementedError ()
+
+def doimport (args):
+	# if args.dest is nonexistent it’ll be picked as workspace directory below,
+	# so we have to resort to a parent directory for temporary data
+	tempDir = args.dest
+	while not tempDir.exists ():
+		tempDir = tempDir.parent
+
+	# detect filetype
+	mime = magic.Magic (mime=True)
+	t = mime.from_file (str (args.input))
+	
+	with tempfile.TemporaryDirectory (dir=tempDir) as tempDir:
+		tempDir = Path (tempDir)
+		logger.debug (f'using temp scratch directory {tempDir}')
+
+		# create another subdirectory, because tempDir will be removed unconditionally
+		unpackDir = tempDir / 'unpack'
+		unpackDir.mkdir ()
+
+		if t == 'application/zip':
+			cmd = [UNZIP_PROGRAM,
+					'-d', unpackDir, # change to tempdir first
+					]
+			if not args.verbose:
+				cmd.append ('-q')
+			cmd.append (args.input)
+		elif t == 'application/x-lzip':
+			cmd = [TAR_PROGRAM,
+					f'--use-compress-program={LZIP_PROGRAM}',
+					'-C', unpackDir, # change to tempdir first
+					'-x', # extract
+					'-f', args.input, # input
+					]
+			if args.verbose:
+				cmd.append ('-v')
+		else:
+			logger.error (f'The file format {t} cannot be imported currently')
+			return 1
+
+		run (cmd)
+		try:
+			ws = Workspace.open (unpackDir)
+		except InvalidWorkspace:
+			# try one of the subdirectories
+			for x in unpackDir.iterdir ():
+				if x.is_dir():
+					try:
+						ws = Workspace.open (x)
+						break
+					except InvalidWorkspace:
+						pass
+		if not ws:
+			logger.error (f'Cannot find valid workspace in {args.input}')
+			return 1
+
+		initWorkspace (ws, verbose=args.verbose)
+		dest = ws.nameToPath (ws.metadata.get ('name', ''), args.dest)
+		os.rename (ws.directory, dest)
+		ws = Workspace.open (dest)
+		formatWorkspace (args, ws)
 
 def dohelp (parser, args):
 	parser.print_usage ()
@@ -934,6 +1002,11 @@ def main ():
 	parserExport.add_argument ('kind', choices=('zip', 'tar+lzip'), help='Export format')
 	parserExport.add_argument ('output', type=Path, help='Output file')
 	parserExport.set_defaults(func=doexport)
+
+	parserImport = subparsers.add_parser('import', help='Import workspace from archive')
+	parserImport.add_argument ('input', type=Path, help='Input file')
+	parserImport.add_argument ('dest', type=Path, default=cwd, help='Destination directory')
+	parserImport.set_defaults(func=doimport)
 
 	args = parser.parse_args()
 	logformat = '{message}'

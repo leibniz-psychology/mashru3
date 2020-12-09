@@ -35,6 +35,7 @@
              (("'getfacl'") (string-append "'" (assoc-ref inputs "acl") "/bin/getfacl'"))
              (("(TAR_PROGRAM = )'tar'" all prefix) (string-append prefix "'" (assoc-ref inputs "tar") "/bin/tar'"))
              (("(ZIP_PROGRAM = )'zip'" all prefix) (string-append prefix "'" (assoc-ref inputs "zip") "/bin/zip'"))
+             (("(UNZIP_PROGRAM = )'unzip'" all prefix) (string-append prefix "'" (assoc-ref inputs "unzip") "/bin/unzip'"))
              (("(LZIP_PROGRAM = )'lzip'" all prefix) (string-append prefix "'" (assoc-ref inputs "lzip") "/bin/lzip'")))
            (substitute* "mashru3/krb5.py"
              (("find_library \\('krb5'\\)")
@@ -42,11 +43,13 @@
   (inputs
    `(("python-unidecode" ,python-unidecode)
      ("python-pyyaml" ,python-pyyaml)
+     ("python-magic" ,python-magic)
      ("rsync" ,rsync) ; for rsync
      ("acl" ,acl) ; for setfacl
      ("nfs4-acl-tools" ,nfs4-acl-tools) ; for nfs4_setfacl
      ("python-pytz" ,python-pytz)
      ("zip" ,zip)
+     ("unzip" ,unzip)
      ("tar" ,tar)
      ("lzip" ,lzip)
      ("mit-krb5" ,mit-krb5)))

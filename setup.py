@@ -14,6 +14,7 @@ setup(
         'unidecode',
         'pyyaml',
         'pytz',
+        'python-magic',
     ],
     python_requires='>=3.7',
     entry_points={
