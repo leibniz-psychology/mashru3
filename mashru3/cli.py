@@ -570,7 +570,16 @@ def dorun (args):
 		if socketDir:
 			cmd.append (f'--share={socketDir.name}')
 		if execcmd:
-			cmd.append ('--')
+			# run tini which will handle all the pid 1 stuff properly (reap
+			# zombies, signal handling, …)
+			cmd.extend ([
+					'--ad-hoc', 'tini', # add to environment
+					'--',
+					'tini',
+					'-p', 'SIGTERM', # die with SIGTERM if parent dies
+					'-s', # enable subreaping (ot really required)
+					'-g', # kill process group
+					'--'])
 			cmd.extend (shlex.split (execcmd))
 			# The -s argument is part of the .v1 interface.
 			if socket:
