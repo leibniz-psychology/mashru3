@@ -19,7 +19,7 @@
 # SOFTWARE.
 
 import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, \
-		json, secrets, stat, random, tempfile, traceback, time
+		json, secrets, stat, random, tempfile, traceback, time, signal
 from enum import Enum, auto, Flag
 from pathlib import Path
 from getpass import getuser
@@ -594,6 +594,14 @@ def dorun (args):
 		os.environ['GUIX_LOCPATH'] = '/home/joeuser/.guix-profile/lib/locale'
 		try:
 			p = subprocess.Popen (cmd)
+
+			# set up signal handling
+			def stop (signal, frame):
+				p.terminate ()
+			# SSH sends SIGHUP?
+			for s in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
+				signal.signal (s, stop)
+
 			p.wait ()
 		except KeyboardInterrupt:
 			pass
