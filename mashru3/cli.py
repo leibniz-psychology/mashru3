@@ -946,6 +946,9 @@ def doimport (args):
 		dest = ws.nameToPath (ws.metadata.get ('name', ''), args.dest)
 		os.rename (ws.directory, dest)
 		ws = Workspace.open (dest)
+		# imported projects are considered copies, so we assign a new, separate id
+		ws.metadata['_id'] = Workspace.randomId ()
+		ws.writeMetadata ()
 		formatWorkspace (args, ws)
 
 def dohelp (parser, args):
