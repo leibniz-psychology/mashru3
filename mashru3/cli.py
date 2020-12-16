@@ -820,7 +820,7 @@ def doexport (args):
 		fileExt = {'zip': 'zip', 'tar+lzip': 'tar.lz'}[args.kind]
 		ext = ''
 		while True:
-			output = base / f'{ws.nameToDir (ws.metadata["name"])}{ext}.{fileExt}'
+			output = base / f'{ws.nameToDir (ws.metadata.get ("name", ""))}{ext}.{fileExt}'
 			if not output.exists ():
 				break
 			ext = f'_{secrets.randbelow (2**64)}'
