@@ -18,6 +18,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+import re
+
 def getattrRecursive (obj, name):
 	"""
 	Recursive version of getattr, which splits name at dots and recurses
@@ -47,4 +49,39 @@ def isPrefix (a, b):
 		return False
 	return all (map (lambda x: x[0] == x[1], zip (a, b)))
 
+def parseRecfile (fd):
+	""" Simple recfile parser """
+	record = dict ()
+	lastkey = None
+	for l in fd:
+		l = l.rstrip ('\n')
+		if not l:
+			# new record
+			yield record
+			record = dict ()
+			lastkey = None
+			continue
+		if l.startswith ('#'):
+			# ignore comments
+			continue
+
+		if l.startswith ('+ ') and lastkey:
+			# continuation
+			record[lastkey] += '\n' + l[2:]
+			continue
+
+		k, v = re.split (r':(?:[\t ]|$)', l, maxsplit=1)
+		record[k] = v
+		lastkey = k
+	if record:
+		yield record
+
+def limit (it, n):
+	i = 0
+	for v in it:
+		i += 1
+		if i > n:
+			break
+
+		yield v
 

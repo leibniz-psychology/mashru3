@@ -18,7 +18,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from .util import getattrRecursive, prefixes, isPrefix
+from io import StringIO
+
+import pytest
+
+from .util import getattrRecursive, prefixes, isPrefix, limit, parseRecfile
 
 def test_prefixes ():
 	assert list (prefixes ([])) == []
@@ -35,4 +39,46 @@ def test_getattrRecursive ():
 
     assert getattrRecursive (o, 'a.b.c') == 1
     assert getattrRecursive (o, 'd') == 2
+
+def test_limit ():
+	assert list (limit ([1, 2, 3], 0)) == []
+	assert list (limit ([1, 2, 3], 1)) == [1]
+	assert list (limit ([1, 2, 3], 2)) == [1, 2]
+
+# Examples taken from recutil documentation:
+# https://www.gnu.org/software/recutils/manual/The-Rec-Format.html#The-Rec-Format
+# We do not support record descriptors.
+@pytest.mark.parametrize("rec,expected", [
+	pytest.param ("""Foo: bar1
++ bar2
++  bar3""", [dict(Foo="bar1\nbar2\n bar3")], id='continuation'),
+	pytest.param ("Foo:\tbar1\n", [dict(Foo="bar1")], id='tab-sep'),
+	pytest.param ("""Name: Ada Lovelace
+Age: 36
+
+Name: Peter the Great
+Age: 53
+
+Name: Matusalem
+Age: 969""", [dict(Name="Ada Lovelace", Age="36"),
+		dict(Name="Peter the Great", Age="53"),
+		dict(Name="Matusalem", Age="969")], id='multi-record'),
+	# XXX: Should use multidict here?
+	pytest.param ("""Name: John Smith
+Email: john.smith@foomail.com
+Email: john@smith.name""", [dict(Name='John Smith',
+		Email='john.smith@foomail.com' #, Email='john@smith.name'
+		)],
+		id='multi-value', marks=pytest.mark.xfail),
+	pytest.param ("""Name: Jose E. Marchesi
+# Occupation: Software Engineer
+# Severe lack of brain capacity
+# Fired on 02/01/2009 (without compensation)
+Occupation: Unoccupied""", [dict(Name='Jose E. Marchesi', Occupation='Unoccupied')], id='comments'),
+	pytest.param ("""Foo:
+
+Bar:""", [dict(Foo=""), dict(Bar='')], id='empty-field'),
+	])
+def test_parseRecfile (rec, expected):
+	assert list (parseRecfile (StringIO (rec))) == expected
 

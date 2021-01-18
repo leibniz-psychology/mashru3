@@ -29,6 +29,7 @@ from collections import defaultdict
 from hashlib import blake2b
 from base64 import b32encode
 from fnmatch import fnmatchcase
+from io import StringIO
 
 import yaml, pytz
 from unidecode import unidecode
@@ -36,7 +37,7 @@ import magic
 
 from .uid import uintToQuint
 from .krb5 import defaultRealm
-from .util import getattrRecursive, prefixes, isPrefix
+from .util import getattrRecursive, prefixes, isPrefix, parseRecfile, limit
 
 logger = logging.getLogger ('cli')
 ZIP_PROGRAM = 'zip'
@@ -62,6 +63,16 @@ class Encoder (json.JSONEncoder):
 
 def jsonDump (o, fd=None):
 	return json.dump (o, fd, cls=Encoder)
+
+class InstalledPackage:
+	def __init__ (self, name, version, output, path):
+		self.name = name
+		self.version = version
+		self.output = output
+		self.path = path
+
+	def toDict (self):
+		return dict (name=self.name, version=self.version, output=self.output, path=self.path)
 
 class WorkspaceException (Exception):
 	pass
@@ -91,6 +102,7 @@ class Workspace:
 				metadata=self.metadata,
 				permissions=dict(getPermissions (wsdir)),
 				applications=list (self.applications),
+				packages=[p.toDict () for p in self.packages],
 				)
 		return d
 
@@ -147,6 +159,19 @@ class Workspace:
 					# running guix environment
 					if entry.get ('type') == 'Application':
 						yield entry
+
+	@property
+	def packages (self):
+		""" Get installed packages """
+		cmd = [str (self.guixbin), "package", "-p", self.profilepath, "-I"]
+		ret = run (cmd, stdout=subprocess.PIPE)
+		lines = ret.stdout.decode ('utf-8').split ('\n')
+		for l in lines:
+			try:
+				name, version, output, path = l.split ('\t')
+			except ValueError:
+				continue
+			yield InstalledPackage (name=name, version=version, output=output, path=path)
 
 	@property
 	def envcmd (self):
@@ -951,6 +976,99 @@ def doimport (args):
 		ws.writeMetadata ()
 		formatWorkspace (args, ws)
 
+def doPackageListInstalled (args):
+	try:
+		ws = Workspace.open (args.directory)
+	except WorkspaceException:
+		logger.error (f'{args.directory} is not a valid workspace')
+		return 1
+
+	for p in ws.packages:
+		formatResult (args, p.toDict (), f'{p.name} ({p.version})')
+
+	return 0
+
+def doPackageSearch (args):
+	try:
+		ws = Workspace.open (args.directory)
+	except WorkspaceException:
+		logger.error (f'{args.directory} is not a valid workspace')
+		return 1
+
+	cmd = [str (ws.guixbin), "search", args.expression]
+	ret = run (cmd, stdout=subprocess.PIPE)
+	for r in limit (parseRecfile (StringIO (ret.stdout.decode ('utf-8'))), args.limit):
+		for k in ('dependencies', 'systems'):
+			if k in r:
+				r[k] = r[k].split (' ')
+		formatResult (args, r, f'{r["name"]} ({r["version"]})\n  {r.get ("synopsis", "")}\n')
+
+def modifyManifest (manifest, specs):
+	""" Modify a manifest, based on specs, which are strings prefixed by + or - """
+
+	# XXX: Obviously having a proper Scheme parser would be nice here, but a
+	# few regexes are less code for now.
+	r = re.compile (r'(\(specifications->manifest\s+\'\()(.*)\)\)', re.DOTALL)
+
+	def modifyPackages (m):
+		l = m.group (2)
+
+		for a in specs:
+			if a.startswith ('+'):
+				s = f'"{a[1:]}"'
+				if s not in l:
+					l += s + '\n'
+				else:
+					logging.debug ('Package "{a}" already exists')
+			elif a.startswith ('-'):
+				s = f'"{a[1:]}"'
+				l = l.replace (s, '')
+			else:
+				# no prefix means replace all
+				l = f'"{a}"'
+
+		return f'{m.group(1)}{l}))'
+
+	ret, replacements = r.subn (modifyPackages, manifest)
+	if replacements == 0:
+		raise ValueError ('Cannot parse manifest')
+	return ret
+
+def doPackageModify (args):
+	try:
+		ws = Workspace.open (args.directory)
+	except WorkspaceException:
+		logger.error (f'{args.directory} is not a valid workspace')
+		return 1
+
+	with open (ws.manifestpath) as fd:
+		manifest = fd.read ()
+
+	try:
+		newManifest = modifyManifest (manifest, args.packages)
+	except ValueError:
+		logging.error ('Cannot modify manifest.')
+		return 2
+
+	logging.debug (f'new manifest is:\n{newManifest}')
+	newManifestPath = ws.manifestpath.with_suffix ('.new')
+	with open (newManifestPath, 'w') as fd:
+		fd.write (newManifest)
+	os.rename (newManifestPath, ws.manifestpath)
+
+	try:
+		ws.ensureProfile ()
+	except ExecutionFailed:
+		# revert
+		logger.error ('New manifest is not valid, reverting changes.')
+		with open (newManifestPath, 'w') as fd:
+			fd.write (manifest)
+		os.rename (newManifestPath, ws.manifestpath)
+		ws.ensureProfile ()
+		return 3
+
+	formatWorkspace (args, ws)
+
 def dohelp (parser, args):
 	parser.print_usage ()
 	return 1
@@ -1027,6 +1145,22 @@ def main ():
 	parserImport.add_argument ('input', type=Path, help='Input file')
 	parserImport.add_argument ('dest', type=Path, default=cwd, help='Destination directory')
 	parserImport.set_defaults(func=doimport)
+
+	parserPackage = subparsers.add_parser('package', help='Package operations')
+	subparsers = parserPackage.add_subparsers ()
+
+	parserInstalled = subparsers.add_parser('installed', help='List installed packages')
+	parserInstalled.set_defaults(func=doPackageListInstalled)
+
+	parserSearch = subparsers.add_parser('search', help='Search available packages')
+	parserSearch.add_argument('--limit', type=int, default=10, help='Limit number of search results')
+	parserSearch.add_argument('expression', nargs='?', help='Search expression')
+	parserSearch.set_defaults(func=doPackageSearch)
+
+	parserModify = subparsers.add_parser('modify', help='Modify installed packages')
+	parserModify.add_argument('packages', nargs=argparse.REMAINDER,
+			help='Package specification, prefixed by + or - to add/remove it')
+	parserModify.set_defaults(func=doPackageModify)
 
 	args = parser.parse_args()
 	logformat = '{message}'

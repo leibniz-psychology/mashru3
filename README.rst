@@ -32,6 +32,14 @@ environment:
 
 	workspace copy ~joeuser/my_new_fancy_workspace janescopy
 
+It’s also possible to install packages into the workspace:
+
+.. code:: console
+
+	workspace package modify -- -coreutils +which
+
+This removes ``coreutils`` and installs ``which``.
+
 Internals
 ---------
 
