@@ -1069,6 +1069,37 @@ def doPackageModify (args):
 
 	formatWorkspace (args, ws)
 
+def doPackageUpgrade (args):
+	try:
+		ws = Workspace.open (args.directory)
+	except WorkspaceException:
+		logger.error (f'{args.directory} is not a valid workspace')
+		return 1
+
+	with open (ws.channelpath, 'r') as fd:
+		channel = fd.read ()
+
+	# We can simply upgrade all packages by removing the commit hashes from our
+	# channel file.
+	newChannel = re.sub (r'\(commit\s+"[a-f0-9]+"\s*\)', '', channel)
+
+	newChannelPath = ws.channelpath.with_suffix ('.new')
+	with open (newChannelPath, 'w') as fd:
+		fd.write (newChannel)
+	os.rename (newChannelPath, ws.channelpath)
+
+	try:
+		ws.ensureProfile ()
+	except ExecutionFailed:
+		# revert
+		logger.error ('Upgrade failed, reverting changes.')
+		with open (newChannelPath, 'w') as fd:
+			fd.write (channel)
+		os.rename (newChannelPath, ws.channelpath)
+		return 3
+
+	formatWorkspace (args, ws)
+
 def dohelp (parser, args):
 	parser.print_usage ()
 	return 1
@@ -1161,6 +1192,9 @@ def main ():
 	parserModify.add_argument('packages', nargs=argparse.REMAINDER,
 			help='Package specification, prefixed by + or - to add/remove it')
 	parserModify.set_defaults(func=doPackageModify)
+
+	parserUpgrade = subparsers.add_parser('upgrade', help='Upgrade installed packages')
+	parserUpgrade.set_defaults(func=doPackageUpgrade)
 
 	args = parser.parse_args()
 	logformat = '{message}'
