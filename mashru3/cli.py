@@ -986,6 +986,9 @@ def doPackageListInstalled (args):
 		logger.error (f'{args.directory} is not a valid workspace')
 		return 1
 
+	# .packages attribute requires guix
+	ws.ensureGuix ()
+
 	for p in ws.packages:
 		formatResult (args, p.toDict (), f'{p.name} ({p.version})')
 
@@ -997,6 +1000,8 @@ def doPackageSearch (args):
 	except WorkspaceException:
 		logger.error (f'{args.directory} is not a valid workspace')
 		return 1
+
+	ws.ensureGuix ()
 
 	cmd = [str (ws.guixbin), "search", args.expression]
 	ret = run (cmd, stdout=subprocess.PIPE)
