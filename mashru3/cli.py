@@ -163,6 +163,9 @@ class Workspace:
 	@property
 	def packages (self):
 		""" Get installed packages """
+		if not self.guixbin.exists ():
+			return []
+
 		cmd = [str (self.guixbin), "package", "-p", self.profilepath, "-I"]
 		ret = run (cmd, stdout=subprocess.PIPE)
 		lines = ret.stdout.decode ('utf-8').split ('\n')
