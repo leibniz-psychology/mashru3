@@ -570,12 +570,12 @@ def dorun (args):
 		socketDir = None
 		socket = None
 		if isConductorApp:
-			forest = args.forest
-			if not forest:
-				logger.error ('No remote forest set up.')
+			conductorServer = args.conductorServer
+			if not conductorServer:
+				logger.error ('No remote conductor server set up.')
 				return 1
 			if args.user:
-				forest = f'{args.user}@{forest}'
+				conductorServer = f'{args.user}@{conductorServer}'
 			socketDir = tempfile.TemporaryDirectory (prefix=__package__)
 			socket = Path (socketDir.name) / '.conductor-socket'
 			# use short hash of the socket path to create unique url key. Note
@@ -586,7 +586,7 @@ def dorun (args):
 			cmd += ['conductor',
 					'-k', key,
 					'-r', # replace
-					forest,
+					conductorServer,
 					str (socket),
 					'--',
 					]
@@ -1138,7 +1138,7 @@ def main ():
 
 	parserRun = subparsers.add_parser('run', help='Run a program inside the workspace')
 	parserRun.add_argument('--user', help='conductor SSH user')
-	parserRun.add_argument('--forest', help='conductor forest path')
+	parserRun.add_argument('--conductorServer', dest='conductorServer', help='conductor server')
 	parserRun.add_argument('--dry-run', dest='dryRun', action='store_true', help='Only print action')
 	parserRun.add_argument('application', nargs='?', help='Application name, omit to list available applications')
 	parserRun.set_defaults(func=dorun)
@@ -1223,8 +1223,8 @@ def main ():
 	# argument was given?
 	if 'searchPath' in args:
 		args.searchPath.extend (config.get ('searchPath', []))
-	if 'forest' in args and not args.forest:
-		args.forest = config.get ('forest')
+	if 'conductorServer' in args and not args.conductorServer:
+		args.conductorServer = config.get ('conductorServer')
 
 	return args.func (args)
 
