@@ -44,6 +44,7 @@ ZIP_PROGRAM = 'zip'
 UNZIP_PROGRAM = 'unzip'
 TAR_PROGRAM = 'tar'
 LZIP_PROGRAM = 'lzip'
+PATCHED_GUIX_PROGRAM = 'guix'
 
 def now ():
 	return datetime.now (tz=pytz.utc)
@@ -81,6 +82,9 @@ class InvalidWorkspace (WorkspaceException):
 	pass
 
 class Workspace:
+	# packages that are essential to mashru3 and must always be installed
+	extraPackages = ['tini']
+
 	def __init__ (self, d, meta=None):
 		# create default uid with 64 random bits
 		defaultMeta = dict (
@@ -180,7 +184,7 @@ class Workspace:
 	def envcmd (self):
 		""" Command that starts a guix environment """
 		user = 'joeuser'
-		cmd = [str (self.guixbin),
+		cmd = [PATCHED_GUIX_PROGRAM,
 				'environment', '-C', '-N',
 				'-u', user,
 				# allow passing the current language, assume GUIX_LOCPATH is
@@ -188,12 +192,8 @@ class Workspace:
 				'-E', '^(LANG|GUIX_LOCPATH)$',
 				'--no-cwd',
 				f'--share={self.directory}=/home/{user}',
+				f'--profile={self.profilepath}',
 				]
-		if self.manifestpath.is_file ():
-			cmd.extend (['-m', str (self.manifestpath)])
-		else:
-			# make sure basic commands like `true` exist
-			cmd.extend (['--ad-hoc', 'coreutils'])
 		return cmd
 
 	def ensureGuix (self):
@@ -255,16 +255,26 @@ class Workspace:
 		manifestExists = manifestPath.exists ()
 		manifestMtime = manifestPath.stat ().st_mtime if manifestExists else 0
 
-		if not profileExists or manifestMtime > profileMtime or guixprofileMtime > profileMtime:
+		haveExtraPackages = list (map (lambda x: x.name,
+				filter (lambda x: x.name in self.extraPackages, self.packages))) == self.extraPackages
+
+		if not profileExists or \
+				manifestMtime > profileMtime or \
+				guixprofileMtime > profileMtime or \
+				not haveExtraPackages:
 			logger.debug (f'Refreshing profile, exists {profilePath.exists()}, '
 					f'mtime {manifestMtime} >? {profileMtime}, '
-					f'guixmtime {guixprofileMtime} >? {profileMtime}')
+					f'guixmtime {guixprofileMtime} >? {profileMtime}'
+					f'haveExtraPackages {haveExtraPackages}')
 			cmd = [str (self.guixbin), 'package',
 					'-p', str (profilePath),
 					'--allow-collisions',
 					]
 			if manifestExists:
 				cmd.extend (['-m', str (manifestPath)])
+			if self.extraPackages:
+				cmd.append ('-i')
+				cmd.extend (self.extraPackages)
 			run (cmd)
 			if profilePath.exists ():
 				# Guix can decide there is nothing to do and will not change
@@ -601,7 +611,6 @@ def dorun (args):
 			# run tini which will handle all the pid 1 stuff properly (reap
 			# zombies, signal handling, …)
 			cmd.extend ([
-					'--ad-hoc', 'tini', # add to environment
 					'--',
 					'tini',
 					'-p', 'SIGTERM', # die with SIGTERM if parent dies
