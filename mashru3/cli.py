@@ -189,7 +189,7 @@ class Workspace:
 				'-u', user,
 				# allow passing the current language, assume GUIX_LOCPATH is
 				# set properly before starting
-				'-E', '^(LANG|GUIX_LOCPATH)$',
+				'-E', '^(LANG|GUIX_LOCPATH|TZDIR)$',
 				'--no-cwd',
 				f'--share={self.directory}=/home/{user}',
 				f'--profile={self.profilepath}',
@@ -629,6 +629,8 @@ def dorun (args):
 
 		# set a proper locpath
 		os.environ['GUIX_LOCPATH'] = '/home/joeuser/.guix-profile/lib/locale'
+		# path for timezone data (if installed, not set via search-path)
+		os.environ['TZDIR'] = '/home/joeuser/.guix-profile/share/zoneinfo'
 		try:
 			p = subprocess.Popen (cmd)
 
