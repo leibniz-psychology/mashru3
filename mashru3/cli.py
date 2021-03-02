@@ -30,10 +30,13 @@ from hashlib import blake2b
 from base64 import b32encode
 from fnmatch import fnmatchcase
 from io import StringIO
+from pwd import getpwuid
+from grp import getgrgid
 
 import yaml, pytz
 from unidecode import unidecode
 import magic
+import posix1e
 
 from .uid import uintToQuint
 from .krb5 import defaultRealm
@@ -104,7 +107,7 @@ class Workspace:
 		wsdir = self.directory
 		d = dict (path=str (wsdir),
 				metadata=self.metadata,
-				permissions=dict(getPermissions (wsdir)),
+				permissions=getPermissions (wsdir),
 				applications=list (self.applications),
 				packages=[p.toDict () for p in self.packages],
 				)
@@ -408,6 +411,8 @@ def setPermissions (group, bits, path: Path, remove=False, default=False, recurs
 		bits = f'A:{flags}:{bits}'
 		cmd.append (bits)
 	else:
+		# use setfacl here instead of pylibacl, because it implements recursion
+		# and the X permission (apply +x only to directories)
 		cmd = ['setfacl']
 		if recursive:
 			cmd.append ('-R')
@@ -433,55 +438,55 @@ def getPermissions (path: Path):
 		# this codepath is currently not tested
 		raise NotImplementedError ('untested')
 
-		cmd = ['nfs4_getfacl', path]
-		ret = run (cmd, stdout=subprocess.PIPE)
-		for l in ret.stdout.decode ('ascii').split ('\n'):
-			if l.startswith ('#') or not l:
-				# comment, ignore
-				continue
-			kind, flags, ident, bits = l.split (':', 3)
-			bits = ''.join (filter (lambda x: x in {'r', 'w', 'x'}, bits))
-			if kind == 'A' and 'g' in flags:
-				yield ident, bits
+#		cmd = ['nfs4_getfacl', path]
+#		ret = run (cmd, stdout=subprocess.PIPE)
+#		for l in ret.stdout.decode ('ascii').split ('\n'):
+#			if l.startswith ('#') or not l:
+#				# comment, ignore
+#				continue
+#			kind, flags, ident, bits = l.split (':', 3)
+#			bits = ''.join (filter (lambda x: x in {'r', 'w', 'x'}, bits))
+#			if kind == 'A' and 'g' in flags:
+#				yield ident, bits
 	else:
-		cmd = ['getfacl', path]
-		ret = run (cmd, stdout=subprocess.PIPE)
-		owner = None
-		myself = getuser ()
-		meta = {}
-		perms = defaultdict (set)
-		for l in ret.stdout.decode ('ascii').split ('\n'):
-			if not l:
-				# empty, ignore
-				continue
-			elif l.startswith ('default:'):
-				# default permissions, ignore as well
-				continue
-			elif l.startswith ('#') and ':' in l:
-				k, v = l.split (':', 1)
-				meta[k.lstrip ('#').strip()] = v.strip()
-				continue
-			elif l.startswith ('#'):
-				# other comments, ignore
-				continue
-			try:
-				kind, ident, bits = l.split (':', 2)
-			except ValueError:
-				logger.error (f'Cannot parse line {l}')
-				raise
-			bits = ''.join (filter (lambda x: x != '-', bits))
-			if kind == 'group' and ident:
-				perms[ident].update (bits)
-			elif kind == 'user' and not ident:
-				perms[meta['owner']].update (bits)
-			elif kind == 'other' and not ident:
-				# Even if we’re not mentioned explicitly anywhere, other bits
-				# affect our permissions. (Assuming additive.)
-				perms[myself].update (bits)
-		# XXX: this assumes every user has a group named after himself
-		perms[meta['owner']].update ('tT')
-		for k, v in perms.items ():
-			yield k, ''.join (v)
+		def fromPermset (permset):
+			return str (permset).replace ('-', '')
+		def fromUid (uid, permset, extra=''):
+			name = getpwuid (s.st_uid).pw_name
+			ret = perms['user'][name] = fromPermset (permset) + extra
+			return ret
+		def fromGid (gid, permset):
+			name = getgrgid (gid).gr_name
+			ret = perms['group'][name] = fromPermset (permset)
+			return ret
+
+		acl = posix1e.ACL (file=path)
+		s = path.lstat ()
+		perms = dict (user=dict (), group=dict (), other='')
+		for entry in acl:
+			if entry.tag_type == posix1e.ACL_USER_OBJ:
+				# for owner
+				p = fromUid (s.st_uid, entry.permset, 'Tt')
+			elif entry.tag_type == posix1e.ACL_GROUP_OBJ:
+				# for file group
+				fromGid (s.st_gid, entry.permset)
+			elif entry.tag_type == posix1e.ACL_USER:
+				# named user
+				fromUid (entry.qualifier, entry.permset)
+			elif entry.tag_type == posix1e.ACL_GROUP:
+				# named group
+				fromGid (entry.qualifier, entry.permset)
+			elif entry.tag_type == posix1e.ACL_OTHER:
+				# world
+				perms['other'] = fromPermset (entry.permset)
+			elif entry.tag_type == posix1e.ACL_UNDEFINED_TAG:
+				pass
+			elif entry.tag_type == posix1e.ACL_MASK:
+				# XXX: implement masking
+				pass
+			else:
+				logger.warning (f'got unhandled ACL entry tag_type={entry.tag_type}')
+		return perms
 
 def initWorkspace (ws, verbose=False):
 	# Fix permissions. Make sure the creator has default permissions, so files

@@ -20,6 +20,24 @@
 (define guix-patched
 (package-with-patches guix (list (string-append %source-dir "/contrib/guix-environment-from-profile.patch"))))
 
+(define-public python-pylibacl
+  (package
+    (name "python-pylibacl")
+    (version "0.6.0")
+    (source
+      (origin
+        (method url-fetch)
+        (uri (pypi-uri "pylibacl" version))
+        (sha256
+          (base32
+            "1zyrk2m20p5b6bdwxhrwib273i6i71zyr5hzssbxfqis5qra9848"))))
+    (build-system python-build-system)
+    (inputs `(("acl" ,acl)))
+    (home-page "https://pylibacl.k1024.org/")
+    (synopsis "POSIX.1e ACLs for python")
+    (description "POSIX.1e ACLs for python")
+    (license license:lgpl2.1+)))
+
 (package
   (name "mashru3")
   (version "0.1")
@@ -36,7 +54,6 @@
              (("'nfs4_setfacl'") (string-append "'" (assoc-ref inputs "nfs4-acl-tools") "/bin/nfs4_setfacl'"))
              (("'nfs4_getfacl'") (string-append "'" (assoc-ref inputs "nfs4-acl-tools") "/bin/nfs4_getfacl'"))
              (("'setfacl'") (string-append "'" (assoc-ref inputs "acl") "/bin/setfacl'"))
-             (("'getfacl'") (string-append "'" (assoc-ref inputs "acl") "/bin/getfacl'"))
              (("(TAR_PROGRAM = )'tar'" all prefix) (string-append prefix "'" (assoc-ref inputs "tar") "/bin/tar'"))
              (("(ZIP_PROGRAM = )'zip'" all prefix) (string-append prefix "'" (assoc-ref inputs "zip") "/bin/zip'"))
              (("(UNZIP_PROGRAM = )'unzip'" all prefix) (string-append prefix "'" (assoc-ref inputs "unzip") "/bin/unzip'"))
@@ -50,6 +67,7 @@
      ("python-pyyaml" ,python-pyyaml)
      ("python-magic" ,python-magic)
      ("rsync" ,rsync) ; for rsync
+     ("python-pylibacl" ,python-pylibacl)
      ("acl" ,acl) ; for setfacl
      ("nfs4-acl-tools" ,nfs4-acl-tools) ; for nfs4_setfacl
      ("python-pytz" ,python-pytz)

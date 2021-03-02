@@ -15,6 +15,7 @@ setup(
         'pyyaml',
         'pytz',
         'python-magic',
+		'pylibacl',
     ],
     python_requires='>=3.7',
     entry_points={
