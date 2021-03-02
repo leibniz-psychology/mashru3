@@ -17,9 +17,6 @@
 
 (define %source-dir (dirname (dirname (current-filename))))
 
-(define guix-patched
-(package-with-patches guix (list (string-append %source-dir "/contrib/guix-environment-from-profile.patch"))))
-
 (define-public python-pylibacl
   (package
     (name "python-pylibacl")
@@ -58,7 +55,7 @@
              (("(ZIP_PROGRAM = )'zip'" all prefix) (string-append prefix "'" (assoc-ref inputs "zip") "/bin/zip'"))
              (("(UNZIP_PROGRAM = )'unzip'" all prefix) (string-append prefix "'" (assoc-ref inputs "unzip") "/bin/unzip'"))
              (("(LZIP_PROGRAM = )'lzip'" all prefix) (string-append prefix "'" (assoc-ref inputs "lzip") "/bin/lzip'"))
-             (("(PATCHED_GUIX_PROGRAM = )'guix'" all prefix) (string-append prefix "'" (assoc-ref inputs "guix") "/bin/guix'")))
+             (("(GUIX_PROGRAM = )'guix'" all prefix) (string-append prefix "'" (assoc-ref inputs "guix") "/bin/guix'")))
            (substitute* "mashru3/krb5.py"
              (("find_library \\('krb5'\\)")
               (string-append "'" (assoc-ref inputs "mit-krb5") "/lib/libkrb5.so'"))))))))
@@ -75,7 +72,7 @@
      ("unzip" ,unzip)
      ("tar" ,tar)
      ("lzip" ,lzip)
-     ("guix" ,guix-patched)
+     ("guix" ,guix)
      ("mit-krb5" ,mit-krb5)))
   (home-page #f)
   (synopsis #f)

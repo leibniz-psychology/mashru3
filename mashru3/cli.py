@@ -47,7 +47,8 @@ ZIP_PROGRAM = 'zip'
 UNZIP_PROGRAM = 'unzip'
 TAR_PROGRAM = 'tar'
 LZIP_PROGRAM = 'lzip'
-PATCHED_GUIX_PROGRAM = 'guix'
+# Must support `guix environment -p`
+GUIX_PROGRAM = 'guix'
 
 def now ():
 	return datetime.now (tz=pytz.utc)
@@ -187,7 +188,7 @@ class Workspace:
 	def envcmd (self):
 		""" Command that starts a guix environment """
 		user = 'joeuser'
-		cmd = [PATCHED_GUIX_PROGRAM,
+		cmd = [GUIX_PROGRAM,
 				'environment', '-C', '-N',
 				'-u', user,
 				# allow passing the current language, assume GUIX_LOCPATH is
