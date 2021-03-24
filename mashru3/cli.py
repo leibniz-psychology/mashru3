@@ -390,47 +390,58 @@ def run (cmd, stdout=None, permittedExitCodes=None):
 		raise ExecutionFailed (ret.returncode)
 	return ret
 
-def setPermissions (group, bits, path: Path, remove=False, default=False, recursive=False):
-	""" ACL abstraction that supports NFS """
+class PermissionTarget (Enum):
+	USER = 'u'
+	GROUP = 'g'
+	OTHER = 'o'
+
+def setPermissions (target: PermissionTarget, qualifier: str, permissions, path: Path, remove=False, default=False, recursive=False):
+	""" ACL abstraction that supports NFS (well…) """
 	if isNfs (path):
-		cmd = ['nfs4_setfacl']
-		flags = 'g'
-		if '@' not in group:
-			group = f'{group}@{defaultRealm()}'
-		if recursive:
-			cmd.append ('-R')
-		if remove:
-			cmd.append ('-x')
-			bits = f'{group}'
-		else:
-			cmd.append ('-a')
-			bits = f'{group}:{bits.upper()}'
-		if default:
-			# directory- and file-inherit
-			flags += 'df'
-		# allow rule
-		bits = f'A:{flags}:{bits}'
-		cmd.append (bits)
+		raise NotImplementedError ()
+#		cmd = ['nfs4_setfacl']
+#		flags = 'g'
+#		if '@' not in group:
+#			group = f'{group}@{defaultRealm()}'
+#		if recursive:
+#			cmd.append ('-R')
+#		if remove:
+#			cmd.append ('-x')
+#			bits = f'{group}'
+#		else:
+#			cmd.append ('-a')
+#			bits = f'{group}:{bits.upper()}'
+#		if default:
+#			# directory- and file-inherit
+#			flags += 'df'
+#		# allow rule
+#		bits = f'A:{flags}:{bits}'
+#		cmd.append (bits)
 	else:
+		if remove:
+			permissions = '---'
+
 		# use setfacl here instead of pylibacl, because it implements recursion
 		# and the X permission (apply +x only to directories)
 		cmd = ['setfacl']
 		if recursive:
 			cmd.append ('-R')
-		if remove:
+		spec = target.value
+		spec += ':' + (qualifier or '')
+		if remove and qualifier:
 			cmd.append ('-x')
-			# removing ignores bits
-			bits = f'g:{group}'
+			# removing ignores permission bits
 		else:
 			cmd.append ('-m')
-			bits = f'g:{group}:{bits}'
+			spec += ':' + permissions
 		if default:
-			bits = f'd:{bits}'
-		cmd.append (bits)
+			spec = f'd:{spec}'
+		cmd.append (spec)
 	cmd.append (str (path))
 	try:
 		run (cmd)
 	except ExecutionFailed as e:
+		logger.debug (cmd)
 		logger.debug (e)
 		raise Exception ('cannot set permissions')
 
@@ -492,7 +503,7 @@ def getPermissions (path: Path):
 def initWorkspace (ws, verbose=False):
 	# Fix permissions. Make sure the creator has default permissions, so files
 	# created by other users are accessible by default.
-	setPermissions (getuser (), 'rwX', ws.directory, default=True, recursive=True)
+	setPermissions (PermissionTarget.USER, getuser (), 'rwX', ws.directory, default=True, recursive=True)
 
 	ws.ensureProfile ()
 
@@ -727,13 +738,13 @@ def doshare (args):
 	else:
 		bits = 'rX'
 
-	for g in args.groups:
+	for target, g in args.target:
 		# change all current files’s permissions
-		setPermissions (g, bits, ws.directory, recursive=True,
+		setPermissions (target, g, bits, ws.directory, recursive=True,
 				remove=args.remove)
 
 		# grant default permission to group, so all new files inherit these rights
-		setPermissions (g, bits, ws.directory, default=True,
+		setPermissions (target, g, bits, ws.directory, default=True,
 				recursive=True, remove=args.remove)
 
 		# also grant permissions to parent directory (if possible). Cannot
@@ -747,7 +758,7 @@ def doshare (args):
 				# only grant read/search permissions
 				assert os.path.isdir (p), f'{p} is not a directory'
 				try:
-					setPermissions (g, 'rX', p, recursive=False)
+					setPermissions (target, g, 'rX', p, recursive=False)
 				except Exception as e:
 					logger.debug (f'Cannot set permissions on parent directory {p}')
 		else:
@@ -1133,6 +1144,16 @@ def parseKV (s):
 	k, v = s.split ('=', 1)
 	return (k.strip (), v.strip ())
 
+def parseTarget (s):
+	try:
+		k, v = s.split (':', 1)
+		k = PermissionTarget(k)
+	except:
+		k = PermissionTarget(s)
+		assert k == PermissionTarget.OTHER
+		v = None
+	return k, v
+
 def main ():
 	cwd = Path.cwd ()
 
@@ -1175,7 +1196,7 @@ def main ():
 	parserShare.add_argument('-x', '--remove', action='store_true', help='Unshare')
 	parserShare.add_argument('-w', '--write', action='store_true', help='Grant write permissions as well')
 	parserShare.add_argument('-f', '--force', action='store_true', help='Override security checks')
-	parserShare.add_argument('groups', nargs='+', help='Target groups')
+	parserShare.add_argument('target', nargs='+', type=parseTarget, help='u:username, g:groupname or o (others)')
 	parserShare.set_defaults(func=doshare)
 
 	parserCopy = subparsers.add_parser('copy', help='Copy workspace')
