@@ -107,6 +107,7 @@ class Workspace:
 	def toDict (self):
 		wsdir = self.directory
 		d = dict (path=str (wsdir),
+				profilePath=str (self.profilepath.resolve ()),
 				metadata=self.metadata,
 				permissions=getPermissions (wsdir),
 				applications=list (self.applications),
