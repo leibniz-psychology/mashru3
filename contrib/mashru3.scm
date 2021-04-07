@@ -17,24 +17,6 @@
 
 (define %source-dir (dirname (dirname (current-filename))))
 
-(define-public python-pylibacl
-  (package
-    (name "python-pylibacl")
-    (version "0.6.0")
-    (source
-      (origin
-        (method url-fetch)
-        (uri (pypi-uri "pylibacl" version))
-        (sha256
-          (base32
-            "1zyrk2m20p5b6bdwxhrwib273i6i71zyr5hzssbxfqis5qra9848"))))
-    (build-system python-build-system)
-    (inputs `(("acl" ,acl)))
-    (home-page "https://pylibacl.k1024.org/")
-    (synopsis "POSIX.1e ACLs for python")
-    (description "POSIX.1e ACLs for python")
-    (license license:lgpl2.1+)))
-
 (package
   (name "mashru3")
   (version "0.1")
