@@ -984,6 +984,7 @@ def doimport (args):
 			return 1
 
 		run (cmd)
+		ws = None
 		try:
 			ws = Workspace.open (unpackDir)
 		except InvalidWorkspace:
