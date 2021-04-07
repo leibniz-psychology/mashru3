@@ -64,6 +64,8 @@ class Encoder (json.JSONEncoder):
 			return obj.isoformat ()
 		elif isinstance (obj, Path):
 			return str (obj)
+		elif isinstance (obj, bytes):
+			return obj.decode ('utf-8', 'replace')
 		return json.JSONEncoder.default (self, obj)
 
 def jsonDump (o, fd=None):
@@ -378,17 +380,12 @@ def isNfs (path):
 class ExecutionFailed (Exception):
 	pass
 
-def run (cmd, stdout=None, permittedExitCodes=None):
-	verbose = logger.getEffectiveLevel () <= logging.DEBUG
-	# hide the ugly details from the user
-	if not stdout and not verbose:
-		stdout = subprocess.DEVNULL
-	stderr = None if verbose else subprocess.DEVNULL
+def run (cmd, stdout=subprocess.PIPE, permittedExitCodes=None):
 	logger.debug (f'running {cmd}')
-	ret = subprocess.run (cmd, stdout=stdout, stderr=stderr)
+	ret = subprocess.run (cmd, stdout=stdout, stderr=subprocess.PIPE)
 	permittedExitCodes = permittedExitCodes or [0]
 	if ret.returncode not in permittedExitCodes:
-		raise ExecutionFailed (ret.returncode)
+		raise ExecutionFailed (cmd, permittedExitCodes, ret)
 	return ret
 
 class PermissionTarget (Enum):
@@ -444,7 +441,7 @@ def setPermissions (target: PermissionTarget, qualifier: str, permissions, path:
 	except ExecutionFailed as e:
 		logger.debug (cmd)
 		logger.debug (e)
-		raise Exception ('cannot set permissions')
+		raise
 
 def getPermissions (path: Path):
 	if isNfs (path):
@@ -512,9 +509,10 @@ def initWorkspace (ws, verbose=False):
 
 	return True
 
-def formatResult (args, r, human=''):
+def formatResult (args, r, human=None):
 	if args.format == Formatter.HUMAN:
-		print (human)
+		if human:
+			print (human)
 	elif args.format == Formatter.YAML:
 		yaml.dump (r, sys.stdout)
 		sys.stdout.write ('---\n')
@@ -531,31 +529,23 @@ def docreate (args):
 	ws = Workspace.create (args.directory, dict (name=' '.join (args.name)))
 	logger.info (f'Creating workspace {ws.metadata["name"]} at {ws.directory}')
 
-	try:
-		skeldirs = [Path.home() / '.config' / __package__ / 'skel',
-				Path ('/etc/' + __package__ + '/skel')]
-		for d in skeldirs:
-			if d.is_dir ():
-				logger.debug (f'Copying skeleton at {d} to {ws.directory}')
-				copydir (d, ws.directory)
-				break
-		if not ws.directory.is_dir ():
-			logger.debug (f'No skeleton directory found, creating empty workspace.')
-			os.makedirs (ws.directory)
+	skeldirs = [Path.home() / '.config' / __package__ / 'skel',
+			Path ('/etc/' + __package__ + '/skel')]
+	for d in skeldirs:
+		if d.is_dir ():
+			logger.debug (f'Copying skeleton at {d} to {ws.directory}')
+			copydir (d, ws.directory)
+			break
+	if not ws.directory.is_dir ():
+		logger.debug (f'No skeleton directory found, creating empty workspace.')
+		os.makedirs (ws.directory)
 
-		initWorkspace (ws, verbose=args.verbose)
+	initWorkspace (ws, verbose=args.verbose)
 
-		# finally print the workspace directory, so it can be consumed by scripts
-		formatWorkspace (args, ws)
+	# finally print the workspace directory, so it can be consumed by scripts
+	formatWorkspace (args, ws)
 
-		return 0
-	except Exception as e:
-		logger.error (f'Creating workspace failed: {e}')
-		if args.verbose:
-			traceback.print_exc ()
-		#shutil.rmtree (ws.directory)
-
-	return 1
+	return 0
 
 def dorun (args):
 	""" Run program inside workspace """
@@ -1103,7 +1093,7 @@ def doPackageModify (args):
 			fd.write (manifest)
 		os.rename (newManifestPath, ws.manifestpath)
 		ws.ensureProfile ()
-		return 3
+		raise
 
 	formatWorkspace (args, ws)
 
@@ -1134,7 +1124,7 @@ def doPackageUpgrade (args):
 		with open (newChannelPath, 'w') as fd:
 			fd.write (channel)
 		os.rename (newChannelPath, ws.channelpath)
-		return 3
+		raise
 
 	formatWorkspace (args, ws)
 
@@ -1266,5 +1256,14 @@ def main ():
 	if 'conductorServer' in args and not args.conductorServer:
 		args.conductorServer = config.get ('conductorServer')
 
-	return args.func (args)
+	try:
+		return args.func (args)
+	except ExecutionFailed as e:
+		ret = e.args[2]
+		formatResult (args, dict (status='exec_error',
+				command=e.args[0],
+				returncode=ret.returncode,
+				stdout=ret.stdout,
+				stderr=ret.stderr), None)
+		return 3
 
