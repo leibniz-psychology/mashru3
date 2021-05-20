@@ -3,6 +3,7 @@
   #:use-module (gnu packages)
   #:use-module (gnu packages compression)
   #:use-module (gnu packages base)
+  #:use-module (gnu packages check)
   #:use-module (gnu packages python-xyz)
   #:use-module (gnu packages rsync)
   #:use-module (gnu packages acl)
@@ -17,14 +18,22 @@
 
 (define %source-dir (dirname (dirname (current-filename))))
 
+;; Avoid including pre-build files like *.egg-info, so we can easily run it
+;; from a development source tree.
+(define (select? file stat)
+  (let ((local-name (substring file (+ (string-length %source-dir) 1))))
+    (or
+      (string-suffix? ".py" local-name)
+      (string=? "README.rst" local-name)
+      (string=? "mashru3" local-name))))
+
 (package
   (name "mashru3")
   (version "0.1")
-  (source (local-file %source-dir #:recursive? #t))
+  (source (local-file %source-dir #:recursive? #t #:select? select?))
   (build-system python-build-system)
   (arguments
-   `(#:tests? #f ; no tests
-     #:phases
+   `(#:phases
      (modify-phases %standard-phases
        (add-after 'unpack 'patch-paths
          (lambda* (#:key inputs native-inputs #:allow-other-keys)
@@ -40,7 +49,11 @@
              (("(GUIX_PROGRAM = )'guix'" all prefix) (string-append prefix "'" (assoc-ref inputs "guix") "/bin/guix'")))
            (substitute* "mashru3/krb5.py"
              (("find_library \\('krb5'\\)")
-              (string-append "'" (assoc-ref inputs "mit-krb5") "/lib/libkrb5.so'"))))))))
+              (string-append "'" (assoc-ref inputs "mit-krb5") "/lib/libkrb5.so'")))))
+       (replace 'check
+         (lambda* (#:key tests? #:allow-other-keys)
+          (when tests?
+            (invoke "pytest")))))))
   (inputs
    `(("python-unidecode" ,python-unidecode)
      ("python-pyyaml" ,python-pyyaml)
@@ -56,6 +69,7 @@
      ("lzip" ,lzip)
      ("guix" ,guix)
      ("mit-krb5" ,mit-krb5)))
+  (native-inputs `(("python-pytest" ,python-pytest)))
   (home-page #f)
   (synopsis #f)
   (description #f)
