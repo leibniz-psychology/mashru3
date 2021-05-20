@@ -18,7 +18,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import re
+import re, os
+from contextlib import contextmanager
 
 def getattrRecursive (obj, name):
 	"""
@@ -84,4 +85,20 @@ def limit (it, n):
 			break
 
 		yield v
+
+class Busy (Exception):
+	pass
+
+@contextmanager
+def softlock (path):
+	try:
+		os.makedirs (os.path.dirname (path), exist_ok=True)
+		fd = os.open (path, flags=os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode=0o666)
+	except FileExistsError:
+		raise Busy ()
+	try:
+		yield
+	finally:
+		os.close (fd)
+		os.unlink (path)
 

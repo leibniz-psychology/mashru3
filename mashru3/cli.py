@@ -40,7 +40,7 @@ import posix1e
 
 from .uid import uintToQuint
 from .krb5 import defaultRealm
-from .util import getattrRecursive, prefixes, isPrefix, parseRecfile, limit
+from .util import getattrRecursive, prefixes, isPrefix, parseRecfile, limit, Busy, softlock
 
 logger = logging.getLogger ('cli')
 ZIP_PROGRAM = 'zip'
@@ -118,12 +118,19 @@ class Workspace:
 		return d
 
 	def writeMetadata (self):
-		with open (self.metapath, 'w') as fd:
-			yaml.dump (self.metadata, fd)
+		with softlock (self.metapath.with_suffix ('.lock')):
+			tmpPath = self.metapath.with_suffix ('.tmp')
+			with open (tmpPath, 'w') as fd:
+				yaml.dump (self.metadata, fd)
+			os.rename (tmpPath, self.metapath)
 
 	@property
 	def configdir (self):
 		return self.directory / '.config'
+
+	@property
+	def cachedir (self):
+		return self.directory / '.cache'
 
 	@property
 	def guixdir (self):
@@ -210,85 +217,87 @@ class Workspace:
 		Usually calling .ensureProfile() is enough.
 		"""
 
-		channelPath = self.channelpath
-		channelMtime = channelPath.stat ().st_mtime if channelPath.exists () else 0
+		with softlock (self.cachedir.joinpath (__package__ + '.ensureGuix.lock')):
+			channelPath = self.channelpath
+			channelMtime = channelPath.stat ().st_mtime if channelPath.exists () else 0
 
-		guixbin = self.guixbin
-		guixbinExists = guixbin.exists ()
-		profilePath = self.guixdir / 'current'
-		profileMtime = profilePath.lstat().st_mtime if guixbinExists else 0
+			guixbin = self.guixbin
+			guixbinExists = guixbin.exists ()
+			profilePath = self.guixdir / 'current'
+			profileMtime = profilePath.lstat().st_mtime if guixbinExists else 0
 
-		# This should work most of the time™
-		if not guixbinExists or channelMtime > profileMtime:
-			logger.debug (f'Getting a fresh guix, exists {guixbin.exists()}, mtime {channelMtime} >? {profileMtime}')
-			os.makedirs (self.guixdir, exist_ok=True)
-			# Use host guix to bootstrap workspace.
-			cmd = ['guix', 'pull',
-					'-p', str (profilePath),
-					]
-			# use channel file from skeleton instead of system default if it exists
-			if os.path.isfile (channelPath):
-				cmd.extend (['-C', str (channelPath)])
-			try:
-				run (cmd)
-			except (ExecutionFailed, KeyboardInterrupt):
-				logger.error ('Failed to initialize guix')
-				raise
+			# This should work most of the time™
+			if not guixbinExists or channelMtime > profileMtime:
+				logger.debug (f'Getting a fresh guix, exists {guixbin.exists()}, mtime {channelMtime} >? {profileMtime}')
+				os.makedirs (self.guixdir, exist_ok=True)
+				# Use host guix to bootstrap workspace.
+				cmd = ['guix', 'pull',
+						'-p', str (profilePath),
+						]
+				# use channel file from skeleton instead of system default if it exists
+				if os.path.isfile (channelPath):
+					cmd.extend (['-C', str (channelPath)])
+				try:
+					run (cmd)
+				except (ExecutionFailed, KeyboardInterrupt):
+					logger.error ('Failed to initialize guix')
+					raise
 
-		# pin guix version, so copying the project will use the exact same version
-		tmpChannelPath = str (channelPath) + '.tmp'
-		with open (tmpChannelPath, 'w') as fd:
-			cmd = [str (guixbin), 'describe', '-f', 'channels']
-			run (cmd, stdout=fd)
-		# fix mtime. Otherwise the Guix profile would be refreshed everytime we
-		# run.
-		os.utime (tmpChannelPath, times=(profileMtime, profileMtime))
-		# atomic overwrite
-		os.rename (tmpChannelPath, channelPath)
+			# pin guix version, so copying the project will use the exact same version
+			tmpChannelPath = str (channelPath) + '.tmp'
+			with open (tmpChannelPath, 'w') as fd:
+				cmd = [str (guixbin), 'describe', '-f', 'channels']
+				run (cmd, stdout=fd)
+			# fix mtime. Otherwise the Guix profile would be refreshed everytime we
+			# run.
+			os.utime (tmpChannelPath, times=(profileMtime, profileMtime))
+			# atomic overwrite
+			os.rename (tmpChannelPath, channelPath)
 
 	def ensureProfile (self):
 		""" Ensure the profile directory .guix-profile exists and matches the current manifest and guix """
 		# we need a runnable guix
-		self.ensureGuix ()
+		with softlock (self.cachedir.joinpath (__package__ + '.ensureProfile.lock')):
+			self.ensureGuix ()
 
-		guixprofilePath = self.guixdir / 'current'
-		guixprofileMtime = guixprofilePath.lstat().st_mtime
+			guixprofilePath = self.guixdir / 'current'
+			guixprofileMtime = guixprofilePath.lstat().st_mtime
 
-		profilePath = self.profilepath
-		profileExists = profilePath.exists ()
-		profileMtime = profilePath.lstat ().st_mtime if profileExists else 0
+			profilePath = self.profilepath
+			profileExists = profilePath.exists ()
+			profileMtime = profilePath.lstat ().st_mtime if profileExists else 0
 
-		manifestPath = self.manifestpath
-		manifestExists = manifestPath.exists ()
-		manifestMtime = manifestPath.stat ().st_mtime if manifestExists else 0
+			manifestPath = self.manifestpath
+			manifestExists = manifestPath.exists ()
+			manifestMtime = manifestPath.stat ().st_mtime if manifestExists else 0
 
-		haveExtraPackages = list (map (lambda x: x.name,
-				filter (lambda x: x.name in self.extraPackages, self.packages))) == self.extraPackages
+			haveExtraPackages = list (map (lambda x: x.name,
+					filter (lambda x: x.name in self.extraPackages, self.packages))) == self.extraPackages
 
-		if not profileExists or \
-				manifestMtime > profileMtime or \
-				guixprofileMtime > profileMtime or \
-				not haveExtraPackages:
-			logger.debug (f'Refreshing profile, exists {profilePath.exists()}, '
-					f'mtime {manifestMtime} >? {profileMtime}, '
-					f'guixmtime {guixprofileMtime} >? {profileMtime}'
-					f'haveExtraPackages {haveExtraPackages}')
-			cmd = [str (self.guixbin), 'package',
-					'-p', str (profilePath),
-					'--allow-collisions',
-					]
-			if manifestExists:
-				cmd.extend (['-m', str (manifestPath)])
-			if self.extraPackages:
-				cmd.append ('-i')
-				cmd.extend (self.extraPackages)
-			run (cmd)
-			if profilePath.exists ():
-				# Guix can decide there is nothing to do and will not change
-				# the symlinks. Make sure we don’t run this again by setting a
-				# new c/mtime.
-				now = time.time ()
-				os.utime (profilePath, times=(now, now), follow_symlinks=False)
+			if not profileExists or \
+					manifestMtime > profileMtime or \
+					guixprofileMtime > profileMtime or \
+					not haveExtraPackages:
+				logger.debug (f'Refreshing profile, exists {profilePath.exists()}, '
+						f'mtime {manifestMtime} >? {profileMtime}, '
+						f'guixmtime {guixprofileMtime} >? {profileMtime}'
+						f'haveExtraPackages {haveExtraPackages}')
+				cmd = [str (self.guixbin), 'package',
+						'-p', str (profilePath),
+						'--allow-collisions',
+						]
+				if manifestExists:
+					cmd.extend (['-m', str (manifestPath)])
+				if self.extraPackages:
+					cmd.append ('-i')
+					cmd.extend (self.extraPackages)
+				run (cmd)
+				if profilePath.exists ():
+					# Guix can decide there is nothing to do and will not change
+					# the symlinks. Make sure we don’t run this again by setting a
+					# new c/mtime.
+					now = time.time ()
+					os.utime (profilePath, times=(now, now), follow_symlinks=False)
 
 	@classmethod
 	def open (cls, d: Path):
@@ -1266,4 +1275,8 @@ def main ():
 				stdout=ret.stdout,
 				stderr=ret.stderr), None)
 		return 3
+	except Busy:
+		logger.error ('Workspace is currently busy. Try again.')
+		formatResult (args, dict (status='busy'), None)
+		return 4
 

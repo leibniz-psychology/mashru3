@@ -19,10 +19,12 @@
 # SOFTWARE.
 
 from io import StringIO
+import os
 
 import pytest
+from tempfile import TemporaryDirectory
 
-from .util import getattrRecursive, prefixes, isPrefix, limit, parseRecfile
+from .util import getattrRecursive, prefixes, isPrefix, limit, parseRecfile, softlock, Busy
 
 def test_prefixes ():
 	assert list (prefixes ([])) == []
@@ -81,4 +83,28 @@ Bar:""", [dict(Foo=""), dict(Bar='')], id='empty-field'),
 	])
 def test_parseRecfile (rec, expected):
 	assert list (parseRecfile (StringIO (rec))) == expected
+
+def test_softlock_cleanup ():
+	with TemporaryDirectory () as d:
+		lockpath = os.path.join (d, 'lock')
+		with softlock (lockpath):
+			assert os.path.exists (lockpath)
+		assert not os.path.exists (lockpath)
+
+def test_softlock_cleanup_exception ():
+	with TemporaryDirectory () as d:
+		lockpath = os.path.join (d, 'lock')
+		with pytest.raises (Exception):
+			with softlock (lockpath):
+				assert os.path.exists (lockpath)
+				raise Exception ('nope')
+		assert not os.path.exists (lockpath)
+
+def test_softlock_busy ():
+	with TemporaryDirectory () as d:
+		lockpath = os.path.join (d, 'lock')
+		with softlock (lockpath):
+			with pytest.raises (Busy):
+				with softlock (lockpath):
+					assert False
 
