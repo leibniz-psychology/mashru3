@@ -41,6 +41,7 @@ import posix1e
 from .uid import uintToQuint
 from .krb5 import defaultRealm
 from .util import getattrRecursive, prefixes, isPrefix, parseRecfile, limit, Busy, softlock
+from .manifest import modifyManifest
 
 logger = logging.getLogger ('cli')
 ZIP_PROGRAM = 'zip'
@@ -1039,37 +1040,6 @@ def doPackageSearch (args):
 			if k in r:
 				r[k] = r[k].split (' ')
 		formatResult (args, r, f'{r["name"]} ({r["version"]})\n  {r.get ("synopsis", "")}\n')
-
-def modifyManifest (manifest, specs):
-	""" Modify a manifest, based on specs, which are strings prefixed by + or - """
-
-	# XXX: Obviously having a proper Scheme parser would be nice here, but a
-	# few regexes are less code for now.
-	r = re.compile (r'(\(specifications->manifest\s+\'\()(.*)\)\)', re.DOTALL)
-
-	def modifyPackages (m):
-		l = m.group (2)
-
-		for a in specs:
-			if a.startswith ('+'):
-				s = f'"{a[1:]}"'
-				if s not in l:
-					l += s + '\n'
-				else:
-					logging.debug ('Package "{a}" already exists')
-			elif a.startswith ('-'):
-				s = f'"{a[1:]}"'
-				l = l.replace (s, '')
-			else:
-				# no prefix means replace all
-				l = f'"{a}"'
-
-		return f'{m.group(1)}{l}))'
-
-	ret, replacements = r.subn (modifyPackages, manifest)
-	if replacements == 0:
-		raise ValueError ('Cannot parse manifest')
-	return ret
 
 def doPackageModify (args):
 	try:

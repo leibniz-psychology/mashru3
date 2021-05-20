@@ -20,7 +20,7 @@
 
 import pytest
 
-from .cli import modifyManifest
+from .manifest import modifyManifest
 
 @pytest.mark.parametrize("manifest,specs,expected", [
 	pytest.param ("(specifications->manifest '())", [], "(specifications->manifest '())", id='noop'),
