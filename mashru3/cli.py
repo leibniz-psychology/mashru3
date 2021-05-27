@@ -1033,12 +1033,24 @@ def doPackageSearch (args):
 
 	ws.ensureGuix ()
 
-	cmd = [str (ws.guixbin), "search", args.expression]
+	cmd = [str (ws.guixbin), "search"] + args.expression
 	ret = run (cmd, stdout=subprocess.PIPE)
 	for r in limit (parseRecfile (StringIO (ret.stdout.decode ('utf-8'))), args.limit):
-		for k in ('dependencies', 'systems'):
+		for k in ('dependencies', 'systems', 'outputs'):
 			if k in r:
-				r[k] = r[k].split (' ')
+				if r[k]:
+					r[k] = r[k].replace ('\n', ' ').split (' ')
+				else:
+					del r[k]
+		for k in ('license', ):
+			if k in r:
+				if r[k]:
+					r[k] = r[k].split (', ')
+				else:
+					del r[k]
+		for k in ('relevance', ):
+			if k in r:
+				r[k] = int (r[k])
 		formatResult (args, r, f'{r["name"]} ({r["version"]})\n  {r.get ("synopsis", "")}\n')
 
 def doPackageModify (args):
@@ -1202,7 +1214,7 @@ def main ():
 
 	parserSearch = subparsers.add_parser('search', help='Search available packages')
 	parserSearch.add_argument('--limit', type=int, default=10, help='Limit number of search results')
-	parserSearch.add_argument('expression', nargs='?', help='Search expression')
+	parserSearch.add_argument('expression', nargs='+', help='Search expressions')
 	parserSearch.set_defaults(func=doPackageSearch)
 
 	parserModify = subparsers.add_parser('modify', help='Modify installed packages')
