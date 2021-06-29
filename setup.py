@@ -16,8 +16,12 @@ setup(
         'pytz',
         'python-magic',
 		'pylibacl',
+		'importlib_resources',
     ],
     python_requires='>=3.7',
+    package_data={
+            'mashru3': ['scripts/*.scm'],
+    },
     entry_points={
     'console_scripts': [
             'workspace = mashru3.cli:main',

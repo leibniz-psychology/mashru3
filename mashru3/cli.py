@@ -19,7 +19,8 @@
 # SOFTWARE.
 
 import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, \
-		json, secrets, stat, random, tempfile, traceback, time, signal
+		json, secrets, stat, random, tempfile, traceback, time, signal, \
+		importlib_resources
 from enum import Enum, auto, Flag
 from pathlib import Path
 from getpass import getuser
@@ -300,6 +301,12 @@ class Workspace:
 					now = time.time ()
 					os.utime (profilePath, times=(now, now), follow_symlinks=False)
 
+	def ensureGcroots (self):
+		""" Make sure all store references are protected from the garbage collector """
+		with importlib_resources.files (__package__).joinpath ('scripts/addRoots.scm') as script:
+			cmd = [GUIX_PROGRAM, 'repl', '--', script, self.directory]
+			run (cmd)
+
 	@classmethod
 	def open (cls, d: Path):
 		"""
@@ -551,6 +558,7 @@ def docreate (args):
 		os.makedirs (ws.directory)
 
 	initWorkspace (ws, verbose=args.verbose)
+	ws.ensureGcroots ()
 
 	# finally print the workspace directory, so it can be consumed by scripts
 	formatWorkspace (args, ws)
@@ -804,6 +812,7 @@ def docopy (args):
 	try:
 		copydir (source.directory, destination.directory)
 		destination.writeMetadata ()
+		destination.ensureGcroots ()
 
 		formatWorkspace (args, destination)
 		return 0

@@ -22,10 +22,9 @@
 ;; from a development source tree.
 (define (select? file stat)
   (let ((local-name (substring file (+ (string-length %source-dir) 1))))
-    (or
-      (string-suffix? ".py" local-name)
-      (string=? "README.rst" local-name)
-      (string=? "mashru3" local-name))))
+    (not
+      (or
+        (string-suffix? ".egg-info" local-name)))))
 
 (package
   (name "mashru3")
@@ -58,6 +57,8 @@
    `(("python-unidecode" ,python-unidecode)
      ("python-pyyaml" ,python-pyyaml)
      ("python-magic" ,python-magic)
+     ;; Need features from Python 3.9
+     ("python-importlib-resources" ,python-importlib-resources)
      ("rsync" ,rsync) ; for rsync
      ("python-pylibacl" ,python-pylibacl)
      ("acl" ,acl) ; for setfacl
