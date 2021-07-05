@@ -89,7 +89,7 @@ def withWorkspace (f):
 			return f (args, source, *largs, **kwargs)
 	return wrapper
 
-def docreate (args):
+def doCreate (args):
 	ws = Workspace.create (args.directory, dict (name=' '.join (args.name)))
 	logger.info (f'Creating workspace {ws.metadata["name"]} at {ws.directory}')
 
@@ -113,7 +113,7 @@ def docreate (args):
 	return 0
 
 @withWorkspace
-def dorun (args, ws):
+def doRun (args, ws):
 	""" Run program inside workspace """
 
 	ws.ensureProfile ()
@@ -231,7 +231,7 @@ def dorun (args, ws):
 
 	return ret
 
-def dolist (args):
+def doList (args):
 	""" List workspaces """
 	# load ignored projects
 	ignored = set ()
@@ -276,7 +276,7 @@ def dolist (args):
 					dirs.remove (df)
 
 @withWorkspace
-def doshare (args, ws):
+def doShare (args, ws):
 	""" Share a workspace with a (user) group """
 
 	# realpath for comparison
@@ -325,7 +325,7 @@ def doshare (args, ws):
 	return 0
 
 @withWorkspace
-def docopy (args, source):
+def doCopy (args, source):
 	meta = dict (source.metadata)
 	# pick a new ID
 	meta.update (dict (_id=Workspace.randomId ()))
@@ -345,7 +345,7 @@ def docopy (args, source):
 	return 1
 
 @withWorkspace
-def domodify (args, ws):
+def doModify (args, ws):
 	logger.debug (f'updating metadata with {args.metadata}')
 	ws.metadata.update (args.metadata)
 	# remove empty values
@@ -360,7 +360,7 @@ def domodify (args, ws):
 	return 0
 
 @withWorkspace
-def doignore (args, ws):
+def doIgnore (args, ws):
 	"""
 	Add workspace to locally ignored workspaces
 	"""
@@ -380,7 +380,7 @@ def doignore (args, ws):
 	return 0
 
 @withWorkspace
-def doexport (args, ws):
+def doExport (args, ws):
 	if args.output.exists () and not args.output.is_dir ():
 		logger.error (f'Output file {args.output} exists.')
 		return 1
@@ -460,7 +460,7 @@ def doexport (args, ws):
 	else:
 		raise NotImplementedError ()
 
-def doimport (args):
+def doImport (args):
 	# if args.dest is nonexistent it’ll be picked as workspace directory below,
 	# so we have to resort to a parent directory for temporary data
 	tempDir = args.dest
@@ -615,7 +615,7 @@ def doPackageUpgrade (args, ws):
 
 	formatWorkspace (args, ws)
 
-def dohelp (parser, args):
+def doHelp (parser, args):
 	parser.print_usage ()
 	return 1
 
@@ -646,19 +646,19 @@ def main ():
 	parser.add_argument('-f', '--format', default=Formatter.HUMAN,
 			type=lambda x: Formatter[x.upper ()], help='Output format')
 	parser.add_argument('-d', '--directory', type=Path, default=cwd, help='Workspace directory')
-	parser.set_defaults (func=partial (dohelp, parser))
+	parser.set_defaults (func=partial (doHelp, parser))
 	subparsers = parser.add_subparsers ()
 
 	parserCreate = subparsers.add_parser('create', help='Create a new workspace')
 	parserCreate.add_argument('name', nargs='+', help='Workspace name')
-	parserCreate.set_defaults(func=docreate)
+	parserCreate.set_defaults(func=doCreate)
 
 	parserRun = subparsers.add_parser('run', help='Run a program inside the workspace')
 	parserRun.add_argument('--user', help='conductor SSH user')
 	parserRun.add_argument('--conductorServer', dest='conductorServer', help='conductor server')
 	parserRun.add_argument('--dry-run', dest='dryRun', action='store_true', help='Only print action')
 	parserRun.add_argument('application', nargs='?', help='Application name, omit to list available applications')
-	parserRun.set_defaults(func=dorun)
+	parserRun.set_defaults(func=doRun)
 
 	parserList = subparsers.add_parser('list', help='List all available workspaces')
 	parserList.add_argument('-s', '--search-path', dest='searchPath',
@@ -669,38 +669,38 @@ def main ():
 					os.path.expanduser ('~/.config/' + __package__ + '/ignore.yaml'), # user default
 					],
 			help='File with ignored projects')
-	parserList.set_defaults(func=dolist)
+	parserList.set_defaults(func=doList)
 
 	parserShare = subparsers.add_parser('share', help='Share workspace with other users')
 	parserShare.add_argument('-x', '--remove', action='store_true', help='Unshare')
 	parserShare.add_argument('-w', '--write', action='store_true', help='Grant write permissions as well')
 	parserShare.add_argument('-f', '--force', action='store_true', help='Override security checks')
 	parserShare.add_argument('target', nargs='+', type=parseTarget, help='u:username, g:groupname or o (others)')
-	parserShare.set_defaults(func=doshare)
+	parserShare.set_defaults(func=doShare)
 
 	parserCopy = subparsers.add_parser('copy', help='Copy workspace')
 	parserCopy.add_argument('dest', nargs='?', default=cwd, type=Path, help='Destination directory')
-	parserCopy.set_defaults(func=docopy)
+	parserCopy.set_defaults(func=doCopy)
 
 	parserModify = subparsers.add_parser('modify', help='Change workspace metadata')
 	parserModify.add_argument('metadata', nargs='+', type=parseKV, help='Key-value pairs')
-	parserModify.set_defaults(func=domodify)
+	parserModify.set_defaults(func=doModify)
 
 	parserIgnore = subparsers.add_parser('ignore', help='Ignore workspace')
 	parserIgnore.add_argument('-i', '--ignore',
 			default=os.path.expanduser ('~/.config/' + __package__ + '/ignore.yaml'), # user default
 			help='File with ignored projects')
-	parserIgnore.set_defaults(func=doignore)
+	parserIgnore.set_defaults(func=doIgnore)
 
 	parserExport = subparsers.add_parser('export', help='Export workspace files or metadata')
 	parserExport.add_argument ('kind', choices=('zip', 'tar+lzip'), help='Export format')
 	parserExport.add_argument ('output', type=Path, help='Output file')
-	parserExport.set_defaults(func=doexport)
+	parserExport.set_defaults(func=doExport)
 
 	parserImport = subparsers.add_parser('import', help='Import workspace from archive')
 	parserImport.add_argument ('input', type=Path, help='Input file')
 	parserImport.add_argument ('dest', type=Path, default=cwd, help='Destination directory')
-	parserImport.set_defaults(func=doimport)
+	parserImport.set_defaults(func=doImport)
 
 	parserPackage = subparsers.add_parser('package', help='Package operations')
 	subparsers = parserPackage.add_subparsers ()
