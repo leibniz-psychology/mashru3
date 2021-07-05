@@ -29,6 +29,7 @@ from hashlib import blake2b
 from base64 import b32encode
 from fnmatch import fnmatchcase
 from io import StringIO
+from functools import wraps
 
 import yaml
 import magic
@@ -76,6 +77,18 @@ def formatResult (args, r, human=None):
 def formatWorkspace (args, ws):
 	formatResult (args, ws.toDict (), f'{ws.directory}')
 
+def withWorkspace (f):
+	""" Decorator which opens the source workspace from args """
+	@wraps (f)
+	def wrapper (args, *largs, **kwargs):
+		try:
+			source = Workspace.open (args.directory)
+		except InvalidWorkspace:
+			logger.error (f'{args.directory.resolve()} is not a valid workspace')
+		else:
+			return f (args, source, *largs, **kwargs)
+	return wrapper
+
 def docreate (args):
 	ws = Workspace.create (args.directory, dict (name=' '.join (args.name)))
 	logger.info (f'Creating workspace {ws.metadata["name"]} at {ws.directory}')
@@ -99,10 +112,10 @@ def docreate (args):
 
 	return 0
 
-def dorun (args):
+@withWorkspace
+def dorun (args, ws):
 	""" Run program inside workspace """
 
-	ws = Workspace.open (args.directory)
 	ws.ensureProfile ()
 
 	# find the application requested
@@ -262,10 +275,10 @@ def dolist (args):
 					logger.debug (f'removing {df} from search tree')
 					dirs.remove (df)
 
-def doshare (args):
+@withWorkspace
+def doshare (args, ws):
 	""" Share a workspace with a (user) group """
 
-	ws = Workspace.open (args.directory or os.getcwd ())
 	# realpath for comparison
 	homeDir = os.path.realpath (os.path.expanduser ('~')).split (os.path.sep)
 	wsDir = os.path.realpath (ws.directory).split (os.path.sep)
@@ -311,13 +324,8 @@ def doshare (args):
 
 	return 0
 
-def docopy (args):
-	try:
-		source = Workspace.open (args.directory)
-	except WorkspaceException:
-		logger.error (f'{source} is not a valid workspace')
-		return 1
-
+@withWorkspace
+def docopy (args, source):
 	meta = dict (source.metadata)
 	# pick a new ID
 	meta.update (dict (_id=Workspace.randomId ()))
@@ -336,13 +344,8 @@ def docopy (args):
 
 	return 1
 
-def domodify (args):
-	try:
-		ws = Workspace.open (args.directory)
-	except WorkspaceException:
-		logger.error (f'{args.directory} is not a valid workspace')
-		return 1
-
+@withWorkspace
+def domodify (args, ws):
 	logger.debug (f'updating metadata with {args.metadata}')
 	ws.metadata.update (args.metadata)
 	# remove empty values
@@ -356,16 +359,11 @@ def domodify (args):
 
 	return 0
 
-def doignore (args):
+@withWorkspace
+def doignore (args, ws):
 	"""
 	Add workspace to locally ignored workspaces
 	"""
-
-	try:
-		ws = Workspace.open (args.directory)
-	except WorkspaceException:
-		logger.error (f'{args.directory} is not a valid workspace')
-		return 1
 
 	ignored = []
 	if os.path.exists (args.ignore):
@@ -381,13 +379,8 @@ def doignore (args):
 
 	return 0
 
-def doexport (args):
-	try:
-		ws = Workspace.open (args.directory)
-	except WorkspaceException:
-		logger.error (f'{args.directory} is not a valid workspace')
-		return 1
-
+@withWorkspace
+def doexport (args, ws):
 	if args.output.exists () and not args.output.is_dir ():
 		logger.error (f'Output file {args.output} exists.')
 		return 1
@@ -532,13 +525,8 @@ def doimport (args):
 		ws.writeMetadata ()
 		formatWorkspace (args, ws)
 
-def doPackageListInstalled (args):
-	try:
-		ws = Workspace.open (args.directory)
-	except WorkspaceException:
-		logger.error (f'{args.directory} is not a valid workspace')
-		return 1
-
+@withWorkspace
+def doPackageListInstalled (args, ws):
 	# .packages attribute requires guix
 	ws.ensureGuix ()
 
@@ -547,13 +535,8 @@ def doPackageListInstalled (args):
 
 	return 0
 
-def doPackageSearch (args):
-	try:
-		ws = Workspace.open (args.directory)
-	except WorkspaceException:
-		logger.error (f'{args.directory} is not a valid workspace')
-		return 1
-
+@withWorkspace
+def doPackageSearch (args, ws):
 	ws.ensureGuix ()
 
 	cmd = [str (ws.guixbin), "search"] + args.expression
@@ -576,13 +559,8 @@ def doPackageSearch (args):
 				r[k] = int (r[k])
 		formatResult (args, r, f'{r["name"]} ({r["version"]})\n  {r.get ("synopsis", "")}\n')
 
-def doPackageModify (args):
-	try:
-		ws = Workspace.open (args.directory)
-	except WorkspaceException:
-		logger.error (f'{args.directory} is not a valid workspace')
-		return 1
-
+@withWorkspace
+def doPackageModify (args, ws):
 	with open (ws.manifestpath) as fd:
 		manifest = fd.read ()
 
@@ -611,13 +589,8 @@ def doPackageModify (args):
 
 	formatWorkspace (args, ws)
 
-def doPackageUpgrade (args):
-	try:
-		ws = Workspace.open (args.directory)
-	except WorkspaceException:
-		logger.error (f'{args.directory} is not a valid workspace')
-		return 1
-
+@withWorkspace
+def doPackageUpgrade (args, ws):
 	with open (ws.channelpath, 'r') as fd:
 		channel = fd.read ()
 
