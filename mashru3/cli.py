@@ -83,8 +83,8 @@ def withWorkspace (f):
 	def wrapper (args, *largs, **kwargs):
 		try:
 			source = Workspace.open (args.directory)
-		except InvalidWorkspace:
-			logger.error (f'{args.directory.resolve()} is not a valid workspace')
+		except InvalidWorkspace as e:
+			logger.error (f'{args.directory.resolve()} is not a valid workspace: {e.args[0]}')
 		else:
 			return f (args, source, *largs, **kwargs)
 	return wrapper

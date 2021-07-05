@@ -273,6 +273,7 @@ class Workspace:
 		"""
 		ws = cls (d)
 		checkfiles = [ws.metapath, ]
+		reason = f'Configuration file {ws.metapath} does not exist'
 		try:
 			if all (map (lambda x: x.exists (), checkfiles)):
 				with open (ws.metapath) as fd:
@@ -281,7 +282,9 @@ class Workspace:
 		except PermissionError:
 			# .exists() call .stat(), which can fail
 			pass
-		raise InvalidWorkspace ()
+		except yaml.YAMLError as e:
+			reason = f'Metadata {ws.metapath} cannot be parsed'
+		raise InvalidWorkspace (reason)
 
 	@staticmethod
 	def nameToDir (name):
