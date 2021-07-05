@@ -18,12 +18,10 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import argparse, re, os, subprocess, logging, shutil, sys, shlex, configparser, \
-		json, secrets, stat, random, tempfile, traceback, time, signal, \
-		importlib_resources
+import argparse, re, os, subprocess, logging, shutil, sys, shlex, \
+		json, secrets, tempfile, traceback, signal
 from enum import Enum, auto, Flag
 from pathlib import Path
-from getpass import getuser
 from datetime import datetime
 from functools import partial
 from collections import defaultdict
@@ -31,29 +29,18 @@ from hashlib import blake2b
 from base64 import b32encode
 from fnmatch import fnmatchcase
 from io import StringIO
-from pwd import getpwuid
-from grp import getgrgid
 
-import yaml, pytz
-from unidecode import unidecode
+import yaml
 import magic
-import posix1e
 
-from .uid import uintToQuint
 from .krb5 import defaultRealm
-from .util import getattrRecursive, prefixes, isPrefix, parseRecfile, limit, Busy, softlock
+from .util import getattrRecursive, prefixes, isPrefix, parseRecfile, limit, run, ExecutionFailed, now
+from .filesystem import Busy, softlock, setPermissions, PermissionTarget, copydir
 from .manifest import modifyManifest
+from .workspace import Workspace, WorkspaceException, InvalidWorkspace, initWorkspace
+from .config import *
 
 logger = logging.getLogger ('cli')
-ZIP_PROGRAM = 'zip'
-UNZIP_PROGRAM = 'unzip'
-TAR_PROGRAM = 'tar'
-LZIP_PROGRAM = 'lzip'
-# Must support `guix environment -p`
-GUIX_PROGRAM = 'guix'
-
-def now ():
-	return datetime.now (tz=pytz.utc)
 
 class Formatter (Enum):
 	HUMAN = auto ()
@@ -72,459 +59,6 @@ class Encoder (json.JSONEncoder):
 
 def jsonDump (o, fd=None):
 	return json.dump (o, fd, cls=Encoder)
-
-class InstalledPackage:
-	def __init__ (self, name, version, output, path):
-		self.name = name
-		self.version = version
-		self.output = output
-		self.path = path
-
-	def toDict (self):
-		return dict (name=self.name, version=self.version, output=self.output, path=self.path)
-
-class WorkspaceException (Exception):
-	pass
-
-class InvalidWorkspace (WorkspaceException):
-	pass
-
-class Workspace:
-	# packages that are essential to mashru3 and must always be installed
-	extraPackages = ['tini']
-
-	def __init__ (self, d, meta=None):
-		# create default uid with 64 random bits
-		defaultMeta = dict (
-				version=1,
-				_id=self.randomId (),
-				)
-		if meta:
-			defaultMeta.update (meta)
-		self.metadata = defaultMeta
-		self.directory = Path (d).resolve ()
-
-	@staticmethod
-	def randomId ():
-		return uintToQuint (secrets.randbelow (2**64), 4)
-
-	def toDict (self):
-		wsdir = self.directory
-		d = dict (path=str (wsdir),
-				profilePath=str (self.profilepath.resolve ()),
-				metadata=self.metadata,
-				permissions=getPermissions (wsdir),
-				applications=list (self.applications),
-				packages=[p.toDict () for p in self.packages],
-				)
-		return d
-
-	def writeMetadata (self):
-		with softlock (self.metapath.with_suffix ('.lock')):
-			tmpPath = self.metapath.with_suffix ('.tmp')
-			with open (tmpPath, 'w') as fd:
-				yaml.dump (self.metadata, fd)
-			os.rename (tmpPath, self.metapath)
-
-	@property
-	def configdir (self):
-		return self.directory / '.config'
-
-	@property
-	def cachedir (self):
-		return self.directory / '.cache'
-
-	@property
-	def guixdir (self):
-		return self.configdir / 'guix'
-
-	@property
-	def guixbin (self):
-		return self.guixdir / 'current' / 'bin' / 'guix'
-
-	@property
-	def metapath (self):
-		""" Path for metadata file """
-		return self.configdir / 'workspace.yaml'
-
-	@property
-	def manifestpath (self):
-		return self.guixdir / 'manifest.scm'
-
-	@property
-	def channelpath (self):
-		return self.guixdir / 'channels.scm'
-
-	@property
-	def profilepath (self):
-		return self.directory / '.guix-profile'
-
-	@property
-	def applications (self):
-		# dummy application to start a shell
-		yield dict (name='Shell', exec=None, _id='org.leibniz-psychology.mashru3.shell')
-
-		searchdirs = [self.directory / '.local' / 'share',
-				self.profilepath / 'share',
-				self.guixdir / 'current' / 'share']
-		for datadir in map (lambda x: x / 'applications', searchdirs):
-			for root, dirs, files in os.walk (datadir):
-				for f in filter (lambda x: x.endswith ('.desktop'), files):
-					path = os.path.join (root, f)
-					config = configparser.ConfigParser ()
-					config.read (path)
-					entry = dict (config['Desktop Entry'])
-					entry['_id'] = os.path.relpath (path, start=datadir).replace ('/', '-')
-					# not checking tryexec here, because that would require
-					# running guix environment
-					if entry.get ('type') == 'Application':
-						yield entry
-
-	@property
-	def packages (self):
-		""" Get installed packages """
-		if not self.guixbin.exists ():
-			return []
-
-		cmd = [str (self.guixbin), "package", "-p", self.profilepath, "-I"]
-		ret = run (cmd, stdout=subprocess.PIPE)
-		lines = ret.stdout.decode ('utf-8').split ('\n')
-		for l in lines:
-			try:
-				name, version, output, path = l.split ('\t')
-			except ValueError:
-				continue
-			yield InstalledPackage (name=name, version=version, output=output, path=path)
-
-	@property
-	def envcmd (self):
-		""" Command that starts a guix environment """
-		user = 'joeuser'
-		cmd = [GUIX_PROGRAM,
-				'environment', '-C', '-N',
-				'-u', user,
-				# allow passing the current language, assume GUIX_LOCPATH is
-				# set properly before starting
-				'-E', '^(LANG|GUIX_LOCPATH|TZDIR)$',
-				'--no-cwd',
-				f'--share={self.directory}=/home/{user}',
-				f'--profile={self.profilepath}',
-				]
-		return cmd
-
-	def ensureGuix (self):
-		"""
-		Ensure the guix binary matches the channel file.
-
-		Usually calling .ensureProfile() is enough.
-		"""
-
-		with softlock (self.cachedir.joinpath (__package__ + '.ensureGuix.lock')):
-			channelPath = self.channelpath
-			channelMtime = channelPath.stat ().st_mtime if channelPath.exists () else 0
-
-			guixbin = self.guixbin
-			guixbinExists = guixbin.exists ()
-			profilePath = self.guixdir / 'current'
-			profileMtime = profilePath.lstat().st_mtime if guixbinExists else 0
-
-			# This should work most of the time™
-			if not guixbinExists or channelMtime > profileMtime:
-				logger.debug (f'Getting a fresh guix, exists {guixbin.exists()}, mtime {channelMtime} >? {profileMtime}')
-				os.makedirs (self.guixdir, exist_ok=True)
-				# Use host guix to bootstrap workspace.
-				cmd = ['guix', 'pull',
-						'-p', str (profilePath),
-						]
-				# use channel file from skeleton instead of system default if it exists
-				if os.path.isfile (channelPath):
-					cmd.extend (['-C', str (channelPath)])
-				try:
-					run (cmd)
-				except (ExecutionFailed, KeyboardInterrupt):
-					logger.error ('Failed to initialize guix')
-					raise
-
-			# pin guix version, so copying the project will use the exact same version
-			tmpChannelPath = str (channelPath) + '.tmp'
-			with open (tmpChannelPath, 'w') as fd:
-				cmd = [str (guixbin), 'describe', '-f', 'channels']
-				run (cmd, stdout=fd)
-			# fix mtime. Otherwise the Guix profile would be refreshed everytime we
-			# run.
-			os.utime (tmpChannelPath, times=(profileMtime, profileMtime))
-			# atomic overwrite
-			os.rename (tmpChannelPath, channelPath)
-
-	def ensureProfile (self):
-		""" Ensure the profile directory .guix-profile exists and matches the current manifest and guix """
-		# we need a runnable guix
-		with softlock (self.cachedir.joinpath (__package__ + '.ensureProfile.lock')):
-			self.ensureGuix ()
-
-			guixprofilePath = self.guixdir / 'current'
-			guixprofileMtime = guixprofilePath.lstat().st_mtime
-
-			profilePath = self.profilepath
-			profileExists = profilePath.exists ()
-			profileMtime = profilePath.lstat ().st_mtime if profileExists else 0
-
-			manifestPath = self.manifestpath
-			manifestExists = manifestPath.exists ()
-			manifestMtime = manifestPath.stat ().st_mtime if manifestExists else 0
-
-			haveExtraPackages = list (map (lambda x: x.name,
-					filter (lambda x: x.name in self.extraPackages, self.packages))) == self.extraPackages
-
-			if not profileExists or \
-					manifestMtime > profileMtime or \
-					guixprofileMtime > profileMtime or \
-					not haveExtraPackages:
-				logger.debug (f'Refreshing profile, exists {profilePath.exists()}, '
-						f'mtime {manifestMtime} >? {profileMtime}, '
-						f'guixmtime {guixprofileMtime} >? {profileMtime}'
-						f'haveExtraPackages {haveExtraPackages}')
-				cmd = [str (self.guixbin), 'package',
-						'-p', str (profilePath),
-						'--allow-collisions',
-						]
-				if manifestExists:
-					cmd.extend (['-m', str (manifestPath)])
-				if self.extraPackages:
-					cmd.append ('-i')
-					cmd.extend (self.extraPackages)
-				run (cmd)
-				if profilePath.exists ():
-					# Guix can decide there is nothing to do and will not change
-					# the symlinks. Make sure we don’t run this again by setting a
-					# new c/mtime.
-					now = time.time ()
-					os.utime (profilePath, times=(now, now), follow_symlinks=False)
-
-	def ensureGcroots (self):
-		""" Make sure all store references are protected from the garbage collector """
-		with importlib_resources.files (__package__).joinpath ('scripts/addRoots.scm') as script:
-			cmd = [GUIX_PROGRAM, 'repl', '--', script, self.directory]
-			run (cmd)
-
-	@classmethod
-	def open (cls, d: Path):
-		"""
-		Verify directory d is a valid workspace and get its metadata
-		"""
-		ws = cls (d)
-		checkfiles = [ws.metapath, ]
-		try:
-			if all (map (lambda x: x.exists (), checkfiles)):
-				with open (ws.metapath) as fd:
-					ws.metadata = yaml.safe_load (fd)
-					return ws
-		except PermissionError:
-			# .exists() call .stat(), which can fail
-			pass
-		raise InvalidWorkspace ()
-
-	@staticmethod
-	def nameToDir (name):
-		# use lowercase, unicode-stripped name as directory. Special characters
-		# are replaced by underscore, but no more than one successive
-		# underscore and not at the beginning or the end.
-		r = re.compile (r'[^a-z0-9]+')
-		subdir = r.sub ('_', unidecode (name.lower ())).strip ('_')
-		if not subdir:
-			# simply generate one
-			subdir = 'unnamed_project'
-		return subdir
-
-	@classmethod
-	def nameToPath (cls, name, suggestedDir):
-		if suggestedDir.exists ():
-			if suggestedDir.is_dir ():
-				# if no dir is given, create one based on the name
-				subdir = cls.nameToDir (name)
-				ext = ''
-				while True:
-					directory = suggestedDir / (subdir + ext)
-					if not directory.exists ():
-						break
-					ext = f'_{random.randint (0, 2**16)}'
-				logger.debug (f'choosing directory {directory} based on name {name}')
-			else:
-				raise ValueError ('Destination exists')
-		else:
-			# use as-as
-			directory = suggestedDir
-
-		return directory
-
-	@classmethod
-	def create (cls, suggestedDir: Path, metadataOverride):
-		stamp = now ()
-		metadata = dict (created=stamp, modified=stamp, creator=getuser ())
-		metadata.update (metadataOverride)
-
-		directory = cls.nameToPath (metadata.get ('name', ''), suggestedDir)
-
-		return cls (directory, metadata)
-
-def getMountPoint (path):
-	""" Return mount point of path """
-	path = Path (path).resolve ()
-	while True:
-		if path.is_mount ():
-			return path
-		path = path.parent
-
-def getMount (path):
-	""" Get mount point info """
-	path = Path (path).resolve ()
-	if not path.is_mount ():
-		raise ValueError ('Not a mount point')
-
-	ret = None
-	with open ('/proc/mounts') as fd:
-		for l in fd:
-			source, dest, kind, attrib, _, _ = l.split (' ')
-			if Path (dest).resolve () == path:
-				ret = dict (source=source, dest=dest, kind=kind, attrib=attrib)
-	# return the last one, which overrides(?) any previous mounts
-	return ret
-
-def isNfs (path):
-	""" Check whether a path is on an NFS mount """
-	return getMount (getMountPoint (path))['kind'].startswith ('nfs')
-
-class ExecutionFailed (Exception):
-	pass
-
-def run (cmd, stdout=subprocess.PIPE, permittedExitCodes=None):
-	logger.debug (f'running {cmd}')
-	ret = subprocess.run (cmd, stdout=stdout, stderr=subprocess.PIPE)
-	permittedExitCodes = permittedExitCodes or [0]
-	if ret.returncode not in permittedExitCodes:
-		raise ExecutionFailed (cmd, permittedExitCodes, ret)
-	return ret
-
-class PermissionTarget (Enum):
-	USER = 'u'
-	GROUP = 'g'
-	OTHER = 'o'
-
-def setPermissions (target: PermissionTarget, qualifier: str, permissions, path: Path, remove=False, default=False, recursive=False):
-	""" ACL abstraction that supports NFS (well…) """
-	if isNfs (path):
-		raise NotImplementedError ()
-#		cmd = ['nfs4_setfacl']
-#		flags = 'g'
-#		if '@' not in group:
-#			group = f'{group}@{defaultRealm()}'
-#		if recursive:
-#			cmd.append ('-R')
-#		if remove:
-#			cmd.append ('-x')
-#			bits = f'{group}'
-#		else:
-#			cmd.append ('-a')
-#			bits = f'{group}:{bits.upper()}'
-#		if default:
-#			# directory- and file-inherit
-#			flags += 'df'
-#		# allow rule
-#		bits = f'A:{flags}:{bits}'
-#		cmd.append (bits)
-	else:
-		if remove:
-			permissions = '---'
-
-		# use setfacl here instead of pylibacl, because it implements recursion
-		# and the X permission (apply +x only to directories)
-		cmd = ['setfacl']
-		if recursive:
-			cmd.append ('-R')
-		spec = target.value
-		spec += ':' + (qualifier or '')
-		if remove and qualifier:
-			cmd.append ('-x')
-			# removing ignores permission bits
-		else:
-			cmd.append ('-m')
-			spec += ':' + permissions
-		if default:
-			spec = f'd:{spec}'
-		cmd.append (spec)
-	cmd.append (str (path))
-	try:
-		run (cmd)
-	except ExecutionFailed as e:
-		logger.debug (cmd)
-		logger.debug (e)
-		raise
-
-def getPermissions (path: Path):
-	if isNfs (path):
-		# this codepath is currently not tested
-		raise NotImplementedError ('untested')
-
-#		cmd = ['nfs4_getfacl', path]
-#		ret = run (cmd, stdout=subprocess.PIPE)
-#		for l in ret.stdout.decode ('ascii').split ('\n'):
-#			if l.startswith ('#') or not l:
-#				# comment, ignore
-#				continue
-#			kind, flags, ident, bits = l.split (':', 3)
-#			bits = ''.join (filter (lambda x: x in {'r', 'w', 'x'}, bits))
-#			if kind == 'A' and 'g' in flags:
-#				yield ident, bits
-	else:
-		def fromPermset (permset):
-			return str (permset).replace ('-', '')
-		def fromUid (uid, permset, extra=''):
-			name = getpwuid (s.st_uid).pw_name
-			ret = perms['user'][name] = fromPermset (permset) + extra
-			return ret
-		def fromGid (gid, permset):
-			name = getgrgid (gid).gr_name
-			ret = perms['group'][name] = fromPermset (permset)
-			return ret
-
-		acl = posix1e.ACL (file=path)
-		s = path.lstat ()
-		perms = dict (user=dict (), group=dict (), other='')
-		for entry in acl:
-			if entry.tag_type == posix1e.ACL_USER_OBJ:
-				# for owner
-				p = fromUid (s.st_uid, entry.permset, 'Tt')
-			elif entry.tag_type == posix1e.ACL_GROUP_OBJ:
-				# for file group
-				fromGid (s.st_gid, entry.permset)
-			elif entry.tag_type == posix1e.ACL_USER:
-				# named user
-				fromUid (entry.qualifier, entry.permset)
-			elif entry.tag_type == posix1e.ACL_GROUP:
-				# named group
-				fromGid (entry.qualifier, entry.permset)
-			elif entry.tag_type == posix1e.ACL_OTHER:
-				# world
-				perms['other'] = fromPermset (entry.permset)
-			elif entry.tag_type == posix1e.ACL_UNDEFINED_TAG:
-				pass
-			elif entry.tag_type == posix1e.ACL_MASK:
-				# XXX: implement masking
-				pass
-			else:
-				logger.warning (f'got unhandled ACL entry tag_type={entry.tag_type}')
-		return perms
-
-def initWorkspace (ws, verbose=False):
-	# Fix permissions. Make sure the creator has default permissions, so files
-	# created by other users are accessible by default.
-	setPermissions (PermissionTarget.USER, getuser (), 'rwX', ws.directory, default=True, recursive=True)
-
-	ws.ensureProfile ()
-
-	ws.writeMetadata ()
-
-	return True
 
 def formatResult (args, r, human=None):
 	if args.format == Formatter.HUMAN:
@@ -777,26 +311,6 @@ def doshare (args):
 
 	return 0
 
-def copydir (source: Path, dest: Path):
-	""" Recursively copy directory """
-	source = str (source)
-	dest = str (dest)
-	# until shutil.copytree does not suck any more
-	if not source.endswith ('/'):
-		source += '/'
-	if not dest.endswith ('/'):
-		dest += '/'
-	cmd = ['rsync',
-			'--recursive',
-			'--links', # preserve symlinks
-			'--group', # preserve group
-			'--executability', # preserve execute bit
-			# --sparse and --preallocate would be benefitial, but do not work on NFS
-			'--times', # preserve mtime
-			source, dest]
-	# do not fail, if some files cannot be copied (23)
-	run (cmd, permittedExitCodes=[0, 23])
-
 def docopy (args):
 	try:
 		source = Workspace.open (args.directory)
@@ -826,7 +340,7 @@ def domodify (args):
 	try:
 		ws = Workspace.open (args.directory)
 	except WorkspaceException:
-		logger.error (f'{source} is not a valid workspace')
+		logger.error (f'{args.directory} is not a valid workspace')
 		return 1
 
 	logger.debug (f'updating metadata with {args.metadata}')
@@ -850,7 +364,7 @@ def doignore (args):
 	try:
 		ws = Workspace.open (args.directory)
 	except WorkspaceException:
-		logger.error (f'{source} is not a valid workspace')
+		logger.error (f'{args.directory} is not a valid workspace')
 		return 1
 
 	ignored = []

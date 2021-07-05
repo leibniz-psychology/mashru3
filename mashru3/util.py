@@ -18,8 +18,12 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import re, os
-from contextlib import contextmanager
+import re, subprocess, logging
+from datetime import datetime
+
+import pytz
+
+logger = logging.getLogger (__name__)
 
 def getattrRecursive (obj, name):
 	"""
@@ -86,19 +90,17 @@ def limit (it, n):
 
 		yield v
 
-class Busy (Exception):
+class ExecutionFailed (Exception):
 	pass
 
-@contextmanager
-def softlock (path):
-	try:
-		os.makedirs (os.path.dirname (path), exist_ok=True)
-		fd = os.open (path, flags=os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode=0o666)
-	except FileExistsError:
-		raise Busy ()
-	try:
-		yield
-	finally:
-		os.close (fd)
-		os.unlink (path)
+def run (cmd, stdout=subprocess.PIPE, permittedExitCodes=None):
+	logger.debug (f'running {cmd}')
+	ret = subprocess.run (cmd, stdout=stdout, stderr=subprocess.PIPE)
+	permittedExitCodes = permittedExitCodes or [0]
+	if ret.returncode not in permittedExitCodes:
+		raise ExecutionFailed (cmd, permittedExitCodes, ret)
+	return ret
+
+def now ():
+	return datetime.now (tz=pytz.utc)
 

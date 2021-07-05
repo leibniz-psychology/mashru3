@@ -36,16 +36,16 @@
      (modify-phases %standard-phases
        (add-after 'unpack 'patch-paths
          (lambda* (#:key inputs native-inputs #:allow-other-keys)
-           (substitute* "mashru3/cli.py"
+           (substitute* "mashru3/config.py"
              (("'rsync'") (string-append "'" (assoc-ref inputs "rsync") "/bin/rsync'"))
-             (("'nfs4_setfacl'") (string-append "'" (assoc-ref inputs "nfs4-acl-tools") "/bin/nfs4_setfacl'"))
-             (("'nfs4_getfacl'") (string-append "'" (assoc-ref inputs "nfs4-acl-tools") "/bin/nfs4_getfacl'"))
+             ;(("'nfs4_setfacl'") (string-append "'" (assoc-ref inputs "nfs4-acl-tools") "/bin/nfs4_setfacl'"))
+             ;(("'nfs4_getfacl'") (string-append "'" (assoc-ref inputs "nfs4-acl-tools") "/bin/nfs4_getfacl'"))
              (("'setfacl'") (string-append "'" (assoc-ref inputs "acl") "/bin/setfacl'"))
-             (("(TAR_PROGRAM = )'tar'" all prefix) (string-append prefix "'" (assoc-ref inputs "tar") "/bin/tar'"))
-             (("(ZIP_PROGRAM = )'zip'" all prefix) (string-append prefix "'" (assoc-ref inputs "zip") "/bin/zip'"))
-             (("(UNZIP_PROGRAM = )'unzip'" all prefix) (string-append prefix "'" (assoc-ref inputs "unzip") "/bin/unzip'"))
-             (("(LZIP_PROGRAM = )'lzip'" all prefix) (string-append prefix "'" (assoc-ref inputs "lzip") "/bin/lzip'"))
-             (("(GUIX_PROGRAM = )'guix'" all prefix) (string-append prefix "'" (assoc-ref inputs "guix") "/bin/guix'")))
+             (("'tar'") (string-append "'" (assoc-ref inputs "tar") "/bin/tar'"))
+             (("'zip'") (string-append "'" (assoc-ref inputs "zip") "/bin/zip'"))
+             (("'unzip'") (string-append "'" (assoc-ref inputs "unzip") "/bin/unzip'"))
+             (("'lzip'") (string-append "'" (assoc-ref inputs "lzip") "/bin/lzip'"))
+             (("'guix'") (string-append "'" (assoc-ref inputs "guix") "/bin/guix'")))
            (substitute* "mashru3/krb5.py"
              (("find_library \\('krb5'\\)")
               (string-append "'" (assoc-ref inputs "mit-krb5") "/lib/libkrb5.so'")))))
