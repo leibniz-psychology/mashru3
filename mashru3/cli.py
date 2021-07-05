@@ -19,7 +19,7 @@
 # SOFTWARE.
 
 import argparse, re, os, subprocess, logging, shutil, sys, shlex, \
-		json, secrets, tempfile, traceback, signal
+		json, secrets, tempfile, traceback, signal, itertools
 from enum import Enum, auto, Flag
 from pathlib import Path
 from datetime import datetime
@@ -82,33 +82,32 @@ def withWorkspace (f):
 	@wraps (f)
 	def wrapper (args, *largs, **kwargs):
 		try:
-			source = Workspace.open (args.directory)
+			with Workspace.open (args.directory) as ws:
+				return f (args, ws, *largs, **kwargs)
 		except InvalidWorkspace as e:
 			logger.error (f'{args.directory.resolve()} is not a valid workspace: {e.args[0]}')
-		else:
-			return f (args, source, *largs, **kwargs)
 	return wrapper
 
 def doCreate (args):
-	ws = Workspace.create (args.directory, dict (name=' '.join (args.name)))
-	logger.info (f'Creating workspace {ws.metadata["name"]} at {ws.directory}')
+	with Workspace.create (args.directory, dict (name=' '.join (args.name))) as ws:
+		logger.info (f'Creating workspace {ws.metadata["name"]} at {ws.directory}')
 
-	skeldirs = [Path.home() / '.config' / __package__ / 'skel',
-			Path ('/etc/' + __package__ + '/skel')]
-	for d in skeldirs:
-		if d.is_dir ():
-			logger.debug (f'Copying skeleton at {d} to {ws.directory}')
-			copydir (d, ws.directory)
-			break
-	if not ws.directory.is_dir ():
-		logger.debug (f'No skeleton directory found, creating empty workspace.')
-		os.makedirs (ws.directory)
+		skeldirs = [Path.home() / '.config' / __package__ / 'skel',
+				Path ('/etc/' + __package__ + '/skel')]
+		for d in skeldirs:
+			if d.is_dir ():
+				logger.debug (f'Copying skeleton at {d} to {ws.directory}')
+				copydir (d, ws.directory)
+				break
+		if not ws.directory.is_dir ():
+			logger.debug (f'No skeleton directory found, creating empty workspace.')
+			os.makedirs (ws.directory)
 
-	initWorkspace (ws, verbose=args.verbose)
-	ws.ensureGcroots ()
+		initWorkspace (ws, verbose=args.verbose)
+		ws.ensureGcroots ()
 
-	# finally print the workspace directory, so it can be consumed by scripts
-	formatWorkspace (args, ws)
+		# finally print the workspace directory, so it can be consumed by scripts
+		formatWorkspace (args, ws)
 
 	return 0
 
@@ -251,20 +250,19 @@ def doList (args):
 		logger.debug (f'searching directory {d} for workspaces')
 		for root, dirs, files in os.walk (d):
 			try:
-				ws = Workspace.open (root)
+				with Workspace.open (root) as ws:
+					# check if ignored
+					ignoreWorkspace = False
+					for i in ignored:
+						kind, pattern = map (str.strip, i.split (':', 1))
+						v = getattrRecursive (ws, kind)
+						logger.debug (f'matching {kind} {pattern} {v}')
+						if fnmatchcase (v, pattern):
+							ignoreWorkspace = True
+							break
 
-				# check if ignored
-				ignoreWorkspace = False
-				for i in ignored:
-					kind, pattern = map (str.strip, i.split (':', 1))
-					v = getattrRecursive (ws, kind)
-					logger.debug (f'matching {kind} {pattern} {v}')
-					if fnmatchcase (v, pattern):
-						ignoreWorkspace = True
-						break
-
-				if not ignoreWorkspace:
-					formatResult (args, ws.toDict (), f'{ws.directory}: {ws.metadata.get("name", "")}')
+					if not ignoreWorkspace:
+						formatResult (args, ws.toDict (), f'{ws.directory}: {ws.metadata.get("name", "")}')
 			except InvalidWorkspace:
 				pass
 
@@ -329,18 +327,16 @@ def doCopy (args, source):
 	meta = dict (source.metadata)
 	# pick a new ID
 	meta.update (dict (_id=Workspace.randomId ()))
-	destination = Workspace.create (args.dest, meta)
+	with Workspace.create (args.dest, meta) as destination :
+		try:
+			copydir (source.directory, destination.directory)
+			destination.ensureGcroots ()
 
-	try:
-		copydir (source.directory, destination.directory)
-		destination.writeMetadata ()
-		destination.ensureGcroots ()
-
-		formatWorkspace (args, destination)
-		return 0
-	except Exception as e:
-		logger.error (f'copying workspace failed: {e}')
-		#shutil.rmtree (args.dest)
+			formatWorkspace (args, destination)
+			return 0
+		except Exception as e:
+			logger.error (f'copying workspace failed: {e}')
+			#shutil.rmtree (args.dest)
 
 	return 1
 
@@ -353,7 +349,6 @@ def doModify (args, ws):
 	logger.debug (f'removing empty keys {remove}')
 	for k, v in remove:
 		ws.metadata.pop (k)
-	ws.writeMetadata ()
 
 	formatWorkspace (args, ws)
 
@@ -501,29 +496,27 @@ def doImport (args):
 
 		run (cmd)
 		ws = None
-		try:
-			ws = Workspace.open (unpackDir)
-		except InvalidWorkspace:
-			# try one of the subdirectories
-			for x in unpackDir.iterdir ():
-				if x.is_dir():
-					try:
-						ws = Workspace.open (x)
-						break
-					except InvalidWorkspace:
-						pass
-		if not ws:
+		possibleRoots = filter (lambda x: x.is_dir (), itertools.chain ([unpackDir], unpackDir.iterdir ()))
+		found = False
+		for r in possibleRoots:
+			try:
+				logger.debug (f'trying to open {r} as workspace')
+				with Workspace.open (r) as ws:
+					initWorkspace (ws, verbose=args.verbose)
+					dest = ws.nameToPath (ws.metadata.get ('name', ''), args.dest)
+					os.rename (ws.directory, dest)
+					found = True
+					break
+			except InvalidWorkspace:
+				pass
+		if not found:
 			logger.error (f'Cannot find valid workspace in {args.input}')
 			return 1
 
-		initWorkspace (ws, verbose=args.verbose)
-		dest = ws.nameToPath (ws.metadata.get ('name', ''), args.dest)
-		os.rename (ws.directory, dest)
-		ws = Workspace.open (dest)
-		# imported projects are considered copies, so we assign a new, separate id
-		ws.metadata['_id'] = Workspace.randomId ()
-		ws.writeMetadata ()
-		formatWorkspace (args, ws)
+		with Workspace.open (dest) as ws:
+			# imported projects are considered copies, so we assign a new, separate id
+			ws.metadata['_id'] = Workspace.randomId ()
+			formatWorkspace (args, ws)
 
 @withWorkspace
 def doPackageListInstalled (args, ws):

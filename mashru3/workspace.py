@@ -18,7 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import secrets, os, configparser, subprocess, time, logging, re
+import secrets, os, configparser, subprocess, time, logging, re, contextlib
 from pathlib import Path
 from getpass import getuser
 
@@ -78,7 +78,7 @@ class Workspace:
 				)
 		return d
 
-	def writeMetadata (self):
+	def _writeMetadata (self):
 		with softlock (self.metapath.with_suffix ('.lock')):
 			tmpPath = self.metapath.with_suffix ('.tmp')
 			with open (tmpPath, 'w') as fd:
@@ -267,24 +267,36 @@ class Workspace:
 			run (cmd)
 
 	@classmethod
+	@contextlib.contextmanager
 	def open (cls, d: Path):
 		"""
 		Verify directory d is a valid workspace and get its metadata
 		"""
 		ws = cls (d)
-		checkfiles = [ws.metapath, ]
-		reason = f'Configuration file {ws.metapath} does not exist'
+
 		try:
-			if all (map (lambda x: x.exists (), checkfiles)):
-				with open (ws.metapath) as fd:
-					ws.metadata = yaml.safe_load (fd)
-					return ws
+			checkfiles = [ws.metapath, ]
+			allExist = all (map (lambda x: x.exists (), checkfiles))
 		except PermissionError:
 			# .exists() call .stat(), which can fail
-			pass
-		except yaml.YAMLError as e:
-			reason = f'Metadata {ws.metapath} cannot be parsed'
-		raise InvalidWorkspace (reason)
+			raise InvalidWorkspace (f'Insufficient permissions to access {ws.metapath}')
+
+		if allExist:
+			with open (ws.metapath) as fd:
+				try:
+					ws.metadata = yaml.safe_load (fd)
+				except yaml.YAMLError as e:
+					raise InvalidWorkspace (f'Metadata {ws.metapath} cannot be parsed')
+
+				try:
+					yield ws
+				finally:
+					ws.close ()
+		else:
+			raise InvalidWorkspace (f'Lacks required files {checkfiles}')
+
+	def close (self):
+		self._writeMetadata ()
 
 	@staticmethod
 	def nameToDir (name):
@@ -320,6 +332,7 @@ class Workspace:
 		return directory
 
 	@classmethod
+	@contextlib.contextmanager
 	def create (cls, suggestedDir: Path, metadataOverride):
 		stamp = now ()
 		metadata = dict (created=stamp, modified=stamp, creator=getuser ())
@@ -327,7 +340,11 @@ class Workspace:
 
 		directory = cls.nameToPath (metadata.get ('name', ''), suggestedDir)
 
-		return cls (directory, metadata)
+		try:
+			ws = cls (directory, metadata)
+			yield ws
+		finally:
+			ws.close ()
 
 def initWorkspace (ws, verbose=False):
 	# Fix permissions. Make sure the creator has default permissions, so files
@@ -335,7 +352,5 @@ def initWorkspace (ws, verbose=False):
 	setPermissions (PermissionTarget.USER, getuser (), 'rwX', ws.directory, default=True, recursive=True)
 
 	ws.ensureProfile ()
-
-	ws.writeMetadata ()
 
 	return True
