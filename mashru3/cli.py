@@ -36,9 +36,9 @@ import magic
 
 from .krb5 import defaultRealm
 from .util import getattrRecursive, prefixes, isPrefix, parseRecfile, limit, run, ExecutionFailed, now
-from .filesystem import Busy, softlock, setPermissions, PermissionTarget, copydir
+from .filesystem import Busy, softlock, setPermissions, PermissionTarget
 from .manifest import modifyManifest
-from .workspace import Workspace, WorkspaceException, InvalidWorkspace, initWorkspace
+from .workspace import Workspace, WorkspaceException, InvalidWorkspace
 from .config import *
 
 logger = logging.getLogger ('cli')
@@ -92,25 +92,28 @@ def doCreate (args):
 	name = ' '.join (args.name)
 	directory = Workspace.nameToPath (name, args.directory)
 	logger.info (f'Creating workspace {name} at {directory}')
-	with Workspace.create (directory) as ws:
-		ws.metadata['name'] = name
 
-		skeldirs = [Path.home() / '.config' / __package__ / 'skel',
-				Path ('/etc/' + __package__ + '/skel')]
-		for d in skeldirs:
-			if d.is_dir ():
-				logger.debug (f'Copying skeleton at {d} to {ws.directory}')
-				copydir (d, ws.directory)
-				break
-		if not ws.directory.is_dir ():
-			logger.debug (f'No skeleton directory found, creating empty workspace.')
-			os.makedirs (ws.directory)
+	skeldirs = [Path.home() / '.config' / __package__ / 'skel',
+			Path ('/etc/' + __package__ + '/skel')]
+	for d in skeldirs:
+		if d.is_dir ():
+			try:
+				with Workspace.open (d) as source:
+					logger.debug (f'Copying skeleton at {d} to {directory}')
+					with source.copy (directory) as destination:
+						# start with a clean state, not officially a copy.
+						destination.resetMetadata ()
+						destination.metadata['name'] = name
+						formatWorkspace (args, destination)
+						return 0
+			except InvalidWorkspace as e:
+				# just try the next one
+				logger.warning (f'Skeleton directory {d} is invalid: {e.args[0]}')
 
-		initWorkspace (ws, verbose=args.verbose)
-		ws.ensureGcroots ()
-
-		# finally print the workspace directory, so it can be consumed by scripts
-		formatWorkspace (args, ws)
+	logger.debug (f'No skeleton directory found, creating empty workspace.')
+	with Workspace.create (directory) as destination:
+		destination.metadata['name'] = name
+		formatWorkspace (args, destination)
 
 	return 0
 
@@ -329,19 +332,11 @@ def doShare (args, ws):
 def doCopy (args, source):
 	directory = Workspace.nameToPath (source.metadata.get ('name', ''), args.dest)
 	logger.info (f'Copying workspace {source.directory} to {directory}')
-	with Workspace.create (directory) as destination:
-		try:
-			copydir (source.directory, destination.directory)
-			# pick a new ID
-			destination.metadata = dict (source.metadata)
-			destination.metadata['_id'] = Workspace.randomId ()
-			destination.ensureGcroots ()
-
-			formatWorkspace (args, destination)
-			return 0
-		except Exception as e:
-			logger.error (f'copying workspace failed: {e}')
-			#shutil.rmtree (args.dest)
+	with source.copy (directory) as destination:
+		# pick a new ID
+		destination.metadata['_id'] = Workspace.randomId ()
+		formatWorkspace (args, destination)
+		return 0
 
 	return 1
 
@@ -507,9 +502,10 @@ def doImport (args):
 			try:
 				logger.debug (f'trying to open {r} as workspace')
 				with Workspace.open (r) as ws:
-					initWorkspace (ws, verbose=args.verbose)
 					dest = ws.nameToPath (ws.metadata.get ('name', ''), args.dest)
-					os.rename (ws.directory, dest)
+					ws.move (dest)
+					# Re-create state from imported profile
+					ws.ensureProfile ()
 					found = True
 					break
 			except InvalidWorkspace:

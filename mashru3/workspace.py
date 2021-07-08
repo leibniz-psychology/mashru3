@@ -26,7 +26,7 @@ import yaml, importlib_resources
 from unidecode import unidecode
 
 from .uid import uintToQuint
-from .filesystem import getPermissions, setPermissions, PermissionTarget, softlock
+from .filesystem import getPermissions, setPermissions, PermissionTarget, softlock, copydir
 from .util import run, ExecutionFailed, now
 from .config import GUIX_PROGRAM
 
@@ -53,19 +53,20 @@ class Workspace:
 	extraPackages = ['tini']
 
 	def __init__ (self, d, meta=None):
-		# create default uid with 64 random bits
+		self.resetMetadata ()
+		if meta:
+			self.metadata.update (meta)
+		self.directory = Path (d).resolve ()
+
+	def resetMetadata (self):
 		stamp = now ()
-		defaultMeta = dict (
+		self.metadata = dict (
 				version=1,
 				_id=self.randomId (),
 				created=stamp,
 				modified=stamp,
 				creator=getuser (),
 				)
-		if meta:
-			defaultMeta.update (meta)
-		self.metadata = defaultMeta
-		self.directory = Path (d).resolve ()
 
 	@staticmethod
 	def randomId ():
@@ -338,17 +339,42 @@ class Workspace:
 	@classmethod
 	@contextlib.contextmanager
 	def create (cls, directory: Path):
+		ws = cls (directory)
+		os.makedirs (ws.directory)
+		ws.ensurePermissions ()
+		ws.ensureProfile ()
+		# ensureProfile may not register with the gc.
+		ws.ensureGcroots ()
+
 		try:
-			ws = cls (directory)
 			yield ws
 		finally:
 			ws.close ()
 
-def initWorkspace (ws, verbose=False):
-	# Fix permissions. Make sure the creator has default permissions, so files
-	# created by other users are accessible by default.
-	setPermissions (PermissionTarget.USER, getuser (), 'rwX', ws.directory, default=True, recursive=True)
+	def ensurePermissions (self):
+		setPermissions (PermissionTarget.USER, getuser (), 'rwX', self.directory,
+				default=True, recursive=True)
 
-	ws.ensureProfile ()
+	@contextlib.contextmanager
+	def copy (self, directory: Path):
+		copydir (self.directory, directory)
 
-	return True
+		ws = self.__class__ (directory)
+		ws.ensurePermissions ()
+		# make sure the new workspace is usable
+		ws.ensureProfile ()
+		# ensureProfile may not register with the gc.
+		ws.ensureGcroots ()
+
+		try:
+			yield ws
+		finally:
+			ws.close ()
+
+	def move (self, destination: Path):
+		""" Move workspace to a different directory (on the same filesystem) """
+		os.rename (self.directory, destination)
+		self.directory = destination
+		# Move GC references to new location.
+		self.ensureGcroots ()
+
