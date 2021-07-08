@@ -89,8 +89,11 @@ def withWorkspace (f):
 	return wrapper
 
 def doCreate (args):
-	with Workspace.create (args.directory, dict (name=' '.join (args.name))) as ws:
-		logger.info (f'Creating workspace {ws.metadata["name"]} at {ws.directory}')
+	name = ' '.join (args.name)
+	directory = Workspace.nameToPath (name, args.directory)
+	logger.info (f'Creating workspace {name} at {directory}')
+	with Workspace.create (directory) as ws:
+		ws.metadata['name'] = name
 
 		skeldirs = [Path.home() / '.config' / __package__ / 'skel',
 				Path ('/etc/' + __package__ + '/skel')]
@@ -324,12 +327,14 @@ def doShare (args, ws):
 
 @withWorkspace
 def doCopy (args, source):
-	meta = dict (source.metadata)
-	# pick a new ID
-	meta.update (dict (_id=Workspace.randomId ()))
-	with Workspace.create (args.dest, meta) as destination :
+	directory = Workspace.nameToPath (source.metadata.get ('name', ''), args.dest)
+	logger.info (f'Copying workspace {source.directory} to {directory}')
+	with Workspace.create (directory) as destination:
 		try:
 			copydir (source.directory, destination.directory)
+			# pick a new ID
+			destination.metadata = dict (source.metadata)
+			destination.metadata['_id'] = Workspace.randomId ()
 			destination.ensureGcroots ()
 
 			formatWorkspace (args, destination)
@@ -643,7 +648,7 @@ def main ():
 	subparsers = parser.add_subparsers ()
 
 	parserCreate = subparsers.add_parser('create', help='Create a new workspace')
-	parserCreate.add_argument('name', nargs='+', help='Workspace name')
+	parserCreate.add_argument('name', nargs='*', help='Workspace name')
 	parserCreate.set_defaults(func=doCreate)
 
 	parserRun = subparsers.add_parser('run', help='Run a program inside the workspace')

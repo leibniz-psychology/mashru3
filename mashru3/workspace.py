@@ -54,9 +54,13 @@ class Workspace:
 
 	def __init__ (self, d, meta=None):
 		# create default uid with 64 random bits
+		stamp = now ()
 		defaultMeta = dict (
 				version=1,
 				_id=self.randomId (),
+				created=stamp,
+				modified=stamp,
+				creator=getuser (),
 				)
 		if meta:
 			defaultMeta.update (meta)
@@ -333,15 +337,9 @@ class Workspace:
 
 	@classmethod
 	@contextlib.contextmanager
-	def create (cls, suggestedDir: Path, metadataOverride):
-		stamp = now ()
-		metadata = dict (created=stamp, modified=stamp, creator=getuser ())
-		metadata.update (metadataOverride)
-
-		directory = cls.nameToPath (metadata.get ('name', ''), suggestedDir)
-
+	def create (cls, directory: Path):
 		try:
-			ws = cls (directory, metadata)
+			ws = cls (directory)
 			yield ws
 		finally:
 			ws.close ()
