@@ -26,22 +26,33 @@ in /etc/krb5.conf.
 from ctypes import CDLL, POINTER, pointer, c_void_p, c_int32, c_char_p
 from ctypes.util import find_library
 
-libkrb5 = CDLL (find_library ('krb5'))
-krb5_init_context = libkrb5.krb5_init_context
-krb5_init_context.argtypes = [POINTER(c_void_p)]
-krb5_init_context.restype = c_int32
+krb5_init_context = None
+krb5_free_context = None
+krb5_get_default_realm = None
+krb5_free_default_realm = None
 
-krb5_free_context = libkrb5.krb5_free_context
-krb5_free_context.argtypes = [c_void_p]
+def _init ():
+	global krb5_init_context, krb5_free_context, krb5_get_default_realm, krb5_free_default_realm
 
-krb5_get_default_realm = libkrb5.krb5_get_default_realm
-krb5_get_default_realm.argtypes = [c_void_p, POINTER(c_char_p)]
-krb5_get_default_realm.restype = c_int32
+	libkrb5 = CDLL (find_library ('krb5'))
+	krb5_init_context = libkrb5.krb5_init_context
+	krb5_init_context.argtypes = [POINTER(c_void_p)]
+	krb5_init_context.restype = c_int32
 
-krb5_free_default_realm = libkrb5.krb5_free_default_realm
-krb5_free_default_realm.argtypes = [c_void_p, c_char_p]
+	krb5_free_context = libkrb5.krb5_free_context
+	krb5_free_context.argtypes = [c_void_p]
+
+	krb5_get_default_realm = libkrb5.krb5_get_default_realm
+	krb5_get_default_realm.argtypes = [c_void_p, POINTER(c_char_p)]
+	krb5_get_default_realm.restype = c_int32
+
+	krb5_free_default_realm = libkrb5.krb5_free_default_realm
+	krb5_free_default_realm.argtypes = [c_void_p, c_char_p]
 
 def defaultRealm ():
+	if krb5_init_context is None:
+		_init ()
+
 	ctx = c_void_p ()
 	res = krb5_init_context (pointer (ctx))
 	if res != 0:
