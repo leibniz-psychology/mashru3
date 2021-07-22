@@ -385,17 +385,17 @@ class Workspace:
 	def copy (self, directory: Path):
 		copydir (self.directory, directory)
 
-		ws = self.__class__ (directory)
-		ws.ensurePermissions ()
-		# make sure the new workspace is usable
-		ws.ensureProfile ()
-		# ensureProfile may not register with the gc.
-		ws.ensureGcroots ()
+		with self.__class__.open (directory) as ws:
+			ws.ensurePermissions ()
+			# make sure the new workspace is usable
+			ws.ensureProfile ()
+			# ensureProfile may not register with the gc.
+			ws.ensureGcroots ()
 
-		try:
-			yield ws
-		finally:
-			ws.close ()
+			try:
+				yield ws
+			finally:
+				pass
 
 	def move (self, destination: Path):
 		""" Move workspace to a different directory (on the same filesystem) """
