@@ -21,6 +21,7 @@
 import secrets, os, configparser, subprocess, time, logging, re, contextlib
 from pathlib import Path
 from getpass import getuser
+from collections import UserDict
 
 import yaml, importlib_resources
 from unidecode import unidecode
@@ -31,6 +32,27 @@ from .util import run, ExecutionFailed, now
 from .config import GUIX_PROGRAM
 
 logger = logging.getLogger (__name__)
+
+class ModificationAwareDict (UserDict):
+	def __init__ (self, *args, **kwargs):
+		super ().__init__ (*args, **kwargs)
+		self.modified = False
+
+	def __setitem__ (self, k, v):
+		self.modified = True
+		return super().__setitem__ (k, v)
+
+	def __delitem__ (self, k):
+		self.modified = True
+		return super().__delitem__ (k)
+
+	def update (self, *pargs, **kwargs):
+		self.modified = True
+		return super().update (*pargs, **kwargs)
+
+	def pop (self, *pargs, **kwargs):
+		self.modified = True
+		return super().pop (*pargs, **kwargs)
 
 class InstalledPackage:
 	def __init__ (self, name, version, output, path):
@@ -60,7 +82,7 @@ class Workspace:
 
 	def resetMetadata (self):
 		stamp = now ()
-		self.metadata = dict (
+		self.metadata = ModificationAwareDict (
 				version=1,
 				_id=self.randomId (),
 				created=stamp,
@@ -76,7 +98,7 @@ class Workspace:
 		wsdir = self.directory
 		d = dict (path=str (wsdir),
 				profilePath=str (self.profilepath.resolve ()),
-				metadata=self.metadata,
+				metadata=self.metadata.data,
 				permissions=getPermissions (wsdir),
 				applications=list (self.applications),
 				packages=[p.toDict () for p in self.packages],
@@ -84,11 +106,13 @@ class Workspace:
 		return d
 
 	def _writeMetadata (self):
-		with softlock (self.metapath.with_suffix ('.lock')):
-			tmpPath = self.metapath.with_suffix ('.tmp')
-			with open (tmpPath, 'w') as fd:
-				yaml.dump (self.metadata, fd)
-			os.rename (tmpPath, self.metapath)
+		if self.metadata.modified:
+			with softlock (self.metapath.with_suffix ('.lock')):
+				tmpPath = self.metapath.with_suffix ('.tmp')
+				with open (tmpPath, 'w') as fd:
+					yaml.dump (self.metadata.data, fd)
+				os.rename (tmpPath, self.metapath)
+			self.metadata.modified = False
 
 	@property
 	def configdir (self):
@@ -289,7 +313,9 @@ class Workspace:
 		if allExist:
 			with open (ws.metapath) as fd:
 				try:
-					ws.metadata = yaml.safe_load (fd)
+					ws.metadata.update (yaml.safe_load (fd))
+					# Just read it from a file.
+					ws.metadata.modified = False
 				except yaml.YAMLError as e:
 					raise InvalidWorkspace (f'Metadata {ws.metapath} cannot be parsed')
 
