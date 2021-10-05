@@ -287,7 +287,12 @@ class Workspace:
 					# the symlinks. Make sure we don’t run this again by setting a
 					# new c/mtime.
 					now = time.time ()
-					os.utime (profilePath, times=(now, now), follow_symlinks=False)
+					try:
+						os.utime (profilePath, times=(now, now), follow_symlinks=False)
+					except PermissionError:
+						# This can happen if we’re not the owner of	a project. Nothing we
+						# can do, so ignore.
+						pass
 
 	def ensureGcroots (self):
 		""" Make sure all store references are protected from the garbage collector """
