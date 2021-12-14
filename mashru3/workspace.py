@@ -22,6 +22,7 @@ import secrets, os, configparser, subprocess, time, logging, re, contextlib
 from pathlib import Path
 from getpass import getuser
 from collections import UserDict
+from contextlib import contextmanager
 
 import yaml, importlib_resources
 from unidecode import unidecode
@@ -73,12 +74,21 @@ class InvalidWorkspace (WorkspaceException):
 class Workspace:
 	# packages that are essential to mashru3 and must always be installed
 	extraPackages = ['tini']
+	relConfigDir = Path ('.config')
+	relCacheDir = Path ('.cache')
+	relProfilePath = Path ('.guix-profile')
+	relGuixDir = relConfigDir / 'guix'
+	relGuixBin = relGuixDir / 'current' / 'bin' / 'guix'
+	relChannelsPath = relGuixDir / 'channels.scm'
+	relManifestPath = relGuixDir / 'manifest.scm'
+	relMetaPath = relConfigDir / 'workspace.yaml'
 
 	def __init__ (self, d, meta=None):
 		self.resetMetadata ()
 		if meta:
 			self.metadata.update (meta)
 		self.directory = Path (d).resolve ()
+		self.dirfd = os.open (self.directory, flags=0)
 
 	def resetMetadata (self):
 		stamp = now ()
@@ -107,45 +117,26 @@ class Workspace:
 
 	def _writeMetadata (self):
 		if self.metadata.modified:
-			with softlock (self.metapath.with_suffix ('.lock')):
-				tmpPath = self.metapath.with_suffix ('.tmp')
-				with open (tmpPath, 'w') as fd:
-					yaml.dump (self.metadata.data, fd)
-				os.rename (tmpPath, self.metapath)
-			self.metadata.modified = False
-
-	@property
-	def configdir (self):
-		return self.directory / '.config'
-
-	@property
-	def cachedir (self):
-		return self.directory / '.cache'
+			with self.chdir ():
+				with softlock (self.relMetaPath.with_suffix ('.lock')):
+					tmpPath = self.relMetaPath.with_suffix ('.tmp')
+					with open (tmpPath, 'w') as fd:
+						yaml.dump (self.metadata.data, fd)
+					os.rename (tmpPath, self.relMetaPath)
+				self.metadata.modified = False
 
 	@property
 	def guixdir (self):
-		return self.configdir / 'guix'
-
-	@property
-	def guixbin (self):
-		return self.guixdir / 'current' / 'bin' / 'guix'
+		return self.directory / self.relGuixDir
 
 	@property
 	def metapath (self):
 		""" Path for metadata file """
-		return self.configdir / 'workspace.yaml'
-
-	@property
-	def manifestpath (self):
-		return self.guixdir / 'manifest.scm'
-
-	@property
-	def channelpath (self):
-		return self.guixdir / 'channels.scm'
+		return self.directory / self.relMetaPath
 
 	@property
 	def profilepath (self):
-		return self.directory / '.guix-profile'
+		return self.directory / self.relProfilePath
 
 	@property
 	def applications (self):
@@ -171,18 +162,19 @@ class Workspace:
 	@property
 	def packages (self):
 		""" Get installed packages """
-		if not self.guixbin.exists ():
+		if not self.relGuixBin.exists ():
 			return []
 
-		cmd = [str (self.guixbin), "package", "-p", self.profilepath, "-I"]
-		ret = run (cmd, stdout=subprocess.PIPE)
-		lines = ret.stdout.decode ('utf-8').split ('\n')
-		for l in lines:
-			try:
-				name, version, output, path = l.split ('\t')
-			except ValueError:
-				continue
-			yield InstalledPackage (name=name, version=version, output=output, path=path)
+		with self.chdir ():
+			cmd = [str (self.relGuixBin), "package", "-p", self.relProfilePath, "-I"]
+			ret = run (cmd, stdout=subprocess.PIPE)
+			lines = ret.stdout.decode ('utf-8').split ('\n')
+			for l in lines:
+				try:
+					name, version, output, path = l.split ('\t')
+				except ValueError:
+					continue
+				yield InstalledPackage (name=name, version=version, output=output, path=path)
 
 	@property
 	def envcmd (self):
@@ -200,6 +192,21 @@ class Workspace:
 				]
 		return cmd
 
+	@contextmanager
+	def chdir (self):
+		""" Context-manager changing the current working directory to
+		the workspace directory """
+		oldWorkingDir = os.getcwd ()
+		os.chdir (self.dirfd)
+
+		yield
+
+		try:
+			os.chdir (oldWorkingDir)
+		except FileNotFoundError:
+			# Nothing we can do to go back.
+			pass
+
 	def ensureGuix (self):
 		"""
 		Ensure the guix binary matches the channel file.
@@ -207,92 +214,94 @@ class Workspace:
 		Usually calling .ensureProfile() is enough.
 		"""
 
-		with softlock (self.cachedir.joinpath (__package__ + '.ensureGuix.lock')):
-			channelPath = self.channelpath
-			channelMtime = channelPath.stat ().st_mtime if channelPath.exists () else 0
+		with self.chdir ():
+			with softlock (self.relCacheDir.joinpath (__package__ + '.ensureGuix.lock')):
+				channelPath = self.relChannelsPath
+				channelMtime = channelPath.stat ().st_mtime if channelPath.exists () else 0
 
-			guixbin = self.guixbin
-			guixbinExists = guixbin.exists ()
-			profilePath = self.guixdir / 'current'
-			profileMtime = profilePath.lstat().st_mtime if guixbinExists else 0
+				guixbin = self.relGuixBin
+				guixbinExists = guixbin.exists ()
+				profilePath = self.relGuixDir / 'current'
+				profileMtime = profilePath.lstat().st_mtime if guixbinExists else 0
 
-			# This should work most of the time™
-			if not guixbinExists or channelMtime > profileMtime:
-				logger.debug (f'Getting a fresh guix, exists {guixbin.exists()}, mtime {channelMtime} >? {profileMtime}')
-				os.makedirs (self.guixdir, exist_ok=True)
-				# Use host guix to bootstrap workspace.
-				cmd = ['guix', 'pull',
-						'-p', str (profilePath),
-						]
-				# use channel file from skeleton instead of system default if it exists
-				if os.path.isfile (channelPath):
-					cmd.extend (['-C', str (channelPath)])
-				try:
-					run (cmd)
-				except (ExecutionFailed, KeyboardInterrupt):
-					logger.error ('Failed to initialize guix')
-					raise
+				# This should work most of the time™
+				if not guixbinExists or channelMtime > profileMtime:
+					logger.debug (f'Getting a fresh guix, exists {guixbin.exists()}, mtime {channelMtime} >? {profileMtime}')
+					os.makedirs (self.relGuixDir, exist_ok=True)
+					# Use host guix to bootstrap workspace.
+					cmd = ['guix', 'pull',
+							'-p', str (profilePath),
+							]
+					# use channel file from skeleton instead of system default if it exists
+					if os.path.isfile (channelPath):
+						cmd.extend (['-C', str (channelPath)])
+					try:
+						run (cmd)
+					except (ExecutionFailed, KeyboardInterrupt):
+						logger.error ('Failed to initialize guix')
+						raise
 
-			# pin guix version, so copying the project will use the exact same version
-			tmpChannelPath = str (channelPath) + '.tmp'
-			with open (tmpChannelPath, 'w') as fd:
-				cmd = [str (guixbin), 'describe', '-f', 'channels']
-				run (cmd, stdout=fd)
-			# fix mtime. Otherwise the Guix profile would be refreshed everytime we
-			# run.
-			os.utime (tmpChannelPath, times=(profileMtime, profileMtime))
-			# atomic overwrite
-			os.rename (tmpChannelPath, channelPath)
+				# pin guix version, so copying the project will use the exact same version
+				tmpChannelPath = str (channelPath) + '.tmp'
+				with open (tmpChannelPath, 'w') as fd:
+					cmd = [str (guixbin), 'describe', '-f', 'channels']
+					run (cmd, stdout=fd)
+				# fix mtime. Otherwise the Guix profile would be refreshed everytime we
+				# run.
+				os.utime (tmpChannelPath, times=(profileMtime, profileMtime))
+				# atomic overwrite
+				os.rename (tmpChannelPath, channelPath)
 
 	def ensureProfile (self):
 		""" Ensure the profile directory .guix-profile exists and matches the current manifest and guix """
 		# we need a runnable guix
-		with softlock (self.cachedir.joinpath (__package__ + '.ensureProfile.lock')):
-			self.ensureGuix ()
+		with self.chdir ():
+			with softlock (self.relCacheDir.joinpath (__package__ + '.ensureProfile.lock')):
+				self.ensureGuix ()
 
-			guixprofilePath = self.guixdir / 'current'
-			guixprofileMtime = guixprofilePath.lstat().st_mtime
+				guixprofilePath = self.relGuixDir / 'current'
+				guixprofileMtime = guixprofilePath.lstat().st_mtime
 
-			profilePath = self.profilepath
-			profileExists = profilePath.exists ()
-			profileMtime = profilePath.lstat ().st_mtime if profileExists else 0
+				profilePath = self.relProfilePath
+				profileExists = profilePath.exists ()
+				profileMtime = profilePath.lstat ().st_mtime if profileExists else 0
 
-			manifestPath = self.manifestpath
-			manifestExists = manifestPath.exists ()
-			manifestMtime = manifestPath.stat ().st_mtime if manifestExists else 0
+				manifestPath = self.relManifestPath
+				manifestExists = manifestPath.exists ()
+				manifestMtime = manifestPath.stat ().st_mtime if manifestExists else 0
 
-			haveExtraPackages = list (map (lambda x: x.name,
-					filter (lambda x: x.name in self.extraPackages, self.packages))) == self.extraPackages
+				haveExtraPackages = list (map (lambda x: x.name,
+						filter (lambda x: x.name in self.extraPackages, self.packages))) == self.extraPackages
 
-			if not profileExists or \
-					manifestMtime > profileMtime or \
-					guixprofileMtime > profileMtime or \
-					not haveExtraPackages:
-				logger.debug (f'Refreshing profile, exists {profilePath.exists()}, '
-						f'mtime {manifestMtime} >? {profileMtime}, '
-						f'guixmtime {guixprofileMtime} >? {profileMtime}'
-						f'haveExtraPackages {haveExtraPackages}')
-				cmd = [str (self.guixbin), 'package',
-						'-p', str (profilePath),
-						'--allow-collisions',
-						]
-				if manifestExists:
-					cmd.extend (['-m', str (manifestPath)])
-				if self.extraPackages:
-					cmd.append ('-i')
-					cmd.extend (self.extraPackages)
-				run (cmd)
-				if profilePath.exists ():
-					# Guix can decide there is nothing to do and will not change
-					# the symlinks. Make sure we don’t run this again by setting a
-					# new c/mtime.
-					now = time.time ()
-					try:
-						os.utime (profilePath, times=(now, now), follow_symlinks=False)
-					except PermissionError:
-						# This can happen if we’re not the owner of	a project. Nothing we
-						# can do, so ignore.
-						pass
+				if not profileExists or \
+						manifestMtime > profileMtime or \
+						guixprofileMtime > profileMtime or \
+						not haveExtraPackages:
+					logger.debug (f'Refreshing profile, exists {profilePath.exists()}, '
+							f'mtime {manifestMtime} >? {profileMtime}, '
+							f'guixmtime {guixprofileMtime} >? {profileMtime}'
+							f'haveExtraPackages {haveExtraPackages}')
+					cmd = [str (self.relGuixBin), 'package',
+							'-p', str (profilePath),
+							'--allow-collisions',
+							]
+					if manifestExists:
+						cmd.extend (['-m', str (manifestPath)])
+					if self.extraPackages:
+						cmd.append ('-i')
+						cmd.extend (self.extraPackages)
+					run (cmd)
+					if profilePath.exists ():
+						# Guix can decide there is nothing to do and will not change
+						# the symlinks. Make sure we don’t run this again by setting a
+						# new c/mtime.
+						now = time.time ()
+						try:
+							os.utime (profilePath, times=(now, now), follow_symlinks=False)
+						except PermissionError:
+							# This can happen if we’re not the owner of	a project. Nothing we
+							# can do, so ignore.
+							pass
 
 	def ensureGcroots (self):
 		""" Make sure all store references are protected from the garbage collector """

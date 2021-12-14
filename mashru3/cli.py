@@ -533,81 +533,84 @@ def doPackageListInstalled (args, ws):
 def doPackageSearch (args, ws):
 	ws.ensureGuix ()
 
-	cmd = [str (ws.guixbin), "search"] + args.expression
-	ret = run (cmd, stdout=subprocess.PIPE)
-	for r in limit (parseRecfile (StringIO (ret.stdout.decode ('utf-8'))), args.limit):
-		for k in ('dependencies', 'systems', 'outputs'):
-			if k in r:
-				if r[k]:
-					r[k] = r[k].replace ('\n', ' ').split (' ')
-				else:
-					del r[k]
-		for k in ('license', ):
-			if k in r:
-				if r[k]:
-					r[k] = r[k].split (', ')
-				else:
-					del r[k]
-		for k in ('relevance', ):
-			if k in r:
-				r[k] = int (r[k])
-		formatResult (args, r, f'{r["name"]} ({r["version"]})\n  {r.get ("synopsis", "")}\n')
+	with ws.chdir ():
+		cmd = [str (ws.relGuixBin), "search"] + args.expression
+		ret = run (cmd, stdout=subprocess.PIPE)
+		for r in limit (parseRecfile (StringIO (ret.stdout.decode ('utf-8'))), args.limit):
+			for k in ('dependencies', 'systems', 'outputs'):
+				if k in r:
+					if r[k]:
+						r[k] = r[k].replace ('\n', ' ').split (' ')
+					else:
+						del r[k]
+			for k in ('license', ):
+				if k in r:
+					if r[k]:
+						r[k] = r[k].split (', ')
+					else:
+						del r[k]
+			for k in ('relevance', ):
+				if k in r:
+					r[k] = int (r[k])
+			formatResult (args, r, f'{r["name"]} ({r["version"]})\n  {r.get ("synopsis", "")}\n')
 
 @withWorkspace
 def doPackageModify (args, ws):
-	with open (ws.manifestpath) as fd:
-		manifest = fd.read ()
+	with ws.chdir ():
+		with open (ws.relManifestPath) as fd:
+			manifest = fd.read ()
 
-	try:
-		newManifest = modifyManifest (manifest, args.packages)
-	except ValueError:
-		logging.error ('Cannot modify manifest.')
-		return 2
+		try:
+			newManifest = modifyManifest (manifest, args.packages)
+		except ValueError:
+			logging.error ('Cannot modify manifest.')
+			return 2
 
-	logging.debug (f'new manifest is:\n{newManifest}')
-	newManifestPath = ws.manifestpath.with_suffix ('.new')
-	with open (newManifestPath, 'w') as fd:
-		fd.write (newManifest)
-	os.rename (newManifestPath, ws.manifestpath)
-
-	try:
-		ws.ensureProfile ()
-	except ExecutionFailed:
-		# revert
-		logger.error ('New manifest is not valid, reverting changes.')
+		logging.debug (f'new manifest is:\n{newManifest}')
+		newManifestPath = ws.relManifestPath.with_suffix ('.new')
 		with open (newManifestPath, 'w') as fd:
-			fd.write (manifest)
-		os.rename (newManifestPath, ws.manifestpath)
-		ws.ensureProfile ()
-		raise
+			fd.write (newManifest)
+		os.rename (newManifestPath, ws.relManifestPath)
 
-	formatWorkspace (args, ws)
+		try:
+			ws.ensureProfile ()
+		except ExecutionFailed:
+			# revert
+			logger.error ('New manifest is not valid, reverting changes.')
+			with open (newManifestPath, 'w') as fd:
+				fd.write (manifest)
+			os.rename (newManifestPath, ws.relManifestPath)
+			ws.ensureProfile ()
+			raise
+
+		formatWorkspace (args, ws)
 
 @withWorkspace
 def doPackageUpgrade (args, ws):
-	with open (ws.channelpath, 'r') as fd:
-		channel = fd.read ()
+	with ws.chdir ():
+		with open (ws.relChannelsPath, 'r') as fd:
+			channel = fd.read ()
 
-	# We can simply upgrade all packages by removing the commit hashes from our
-	# channel file.
-	newChannel = re.sub (r'\(commit\s+"[a-f0-9]+"\s*\)', '', channel)
+		# We can simply upgrade all packages by removing the commit hashes from our
+		# channel file.
+		newChannel = re.sub (r'\(commit\s+"[a-f0-9]+"\s*\)', '', channel)
 
-	newChannelPath = ws.channelpath.with_suffix ('.new')
-	with open (newChannelPath, 'w') as fd:
-		fd.write (newChannel)
-	os.rename (newChannelPath, ws.channelpath)
-
-	try:
-		ws.ensureProfile ()
-	except ExecutionFailed:
-		# revert
-		logger.error ('Upgrade failed, reverting changes.')
+		newChannelPath = ws.relChannelsPath.with_suffix ('.new')
 		with open (newChannelPath, 'w') as fd:
-			fd.write (channel)
-		os.rename (newChannelPath, ws.channelpath)
-		raise
+			fd.write (newChannel)
+		os.rename (newChannelPath, ws.relChannelsPath)
 
-	formatWorkspace (args, ws)
+		try:
+			ws.ensureProfile ()
+		except ExecutionFailed:
+			# revert
+			logger.error ('Upgrade failed, reverting changes.')
+			with open (newChannelPath, 'w') as fd:
+				fd.write (channel)
+			os.rename (newChannelPath, ws.relChannelsPath)
+			raise
+
+		formatWorkspace (args, ws)
 
 def doHelp (parser, args):
 	parser.print_usage ()
