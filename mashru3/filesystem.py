@@ -65,15 +65,23 @@ class Busy (Exception):
 @contextmanager
 def softlock (path):
 	try:
-		os.makedirs (os.path.dirname (path), exist_ok=True)
-		fd = os.open (path, flags=os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode=0o666)
+		basename = os.path.basename (path)
+		dirname = os.path.dirname (path)
+		os.makedirs (dirname, exist_ok=True)
+		dirfd = os.open (dirname, flags=0)
+		fd = os.open (basename, flags=os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode=0o666, dir_fd=dirfd)
 	except FileExistsError:
 		raise Busy ()
 	try:
 		yield
 	finally:
-		os.close (fd)
-		os.unlink (path)
+		try:
+			os.close (fd)
+			os.unlink (basename, dir_fd=dirfd)
+			os.close (dirfd)
+		except FileNotFoundError:
+			# Ignore errors at this point.
+			pass
 
 class PermissionTarget (Enum):
 	USER = 'u'

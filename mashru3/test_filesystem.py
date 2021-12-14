@@ -29,3 +29,19 @@ def test_softlock_busy ():
 				with softlock (lockpath):
 					assert False
 
+def test_softlock_unlink ():
+	with TemporaryDirectory () as d:
+		lockpath = os.path.join (d, 'lock')
+		with softlock (lockpath):
+			assert os.path.exists (lockpath)
+			os.unlink (lockpath)
+		assert not os.path.exists (lockpath)
+
+def test_softlock_movedir ():
+	with TemporaryDirectory () as d:
+		lockpath = os.path.join (d, 'lock')
+		with softlock (lockpath):
+			assert os.path.exists (lockpath)
+			os.rename (d, d + '.new')
+		assert not os.path.exists (lockpath)
+
