@@ -161,11 +161,11 @@ class Workspace:
 
 	@property
 	def packages (self):
-		""" Get installed packages """
-		if not self.relGuixBin.exists ():
-			return []
-
 		with self.chdir ():
+			""" Get installed packages """
+			if not self.relGuixBin.exists ():
+				return []
+
 			cmd = [str (self.relGuixBin), "package", "-p", self.relProfilePath, "-I"]
 			ret = run (cmd, stdout=subprocess.PIPE)
 			lines = ret.stdout.decode ('utf-8').split ('\n')
