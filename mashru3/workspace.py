@@ -73,7 +73,7 @@ class InvalidWorkspace (WorkspaceException):
 
 class Workspace:
 	# packages that are essential to mashru3 and must always be installed
-	extraPackages = ['tini']
+	extraPackages = {'tini'}
 	relConfigDir = Path ('.config')
 	relCacheDir = Path ('.cache')
 	relProfilePath = Path ('.guix-profile')
@@ -271,7 +271,7 @@ class Workspace:
 				manifestExists = manifestPath.exists ()
 				manifestMtime = manifestPath.stat ().st_mtime if manifestExists else 0
 
-				haveExtraPackages = list (map (lambda x: x.name,
+				haveExtraPackages = set (map (lambda x: x.name,
 						filter (lambda x: x.name in self.extraPackages, self.packages))) == self.extraPackages
 
 				if not profileExists or \
