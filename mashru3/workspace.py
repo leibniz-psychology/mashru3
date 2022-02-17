@@ -150,7 +150,7 @@ class Workspace:
 			for root, dirs, files in os.walk (datadir):
 				for f in filter (lambda x: x.endswith ('.desktop'), files):
 					path = os.path.join (root, f)
-					config = configparser.ConfigParser ()
+					config = configparser.ConfigParser (interpolation=None)
 					config.read (path)
 					entry = dict (config['Desktop Entry'])
 					entry['_id'] = os.path.relpath (path, start=datadir).replace ('/', '-')
