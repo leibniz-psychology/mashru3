@@ -171,7 +171,8 @@ class Workspace:
 			lines = ret.stdout.decode ('utf-8').split ('\n')
 			for l in lines:
 				try:
-					name, version, output, path = l.split ('\t')
+					# Guix tries to align columns with one or more tabs
+					name, version, output, path = re.split (r'\s+', l)
 				except ValueError:
 					continue
 				yield InstalledPackage (name=name, version=version, output=output, path=path)
