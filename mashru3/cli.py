@@ -335,6 +335,14 @@ def doCopy (args, source):
 	with source.copy (directory) as destination:
 		# pick a new ID
 		destination.metadata['_id'] = Workspace.randomId ()
+
+		backupDir = destination.directory / '.backup'
+		if backupDir.exists ():
+			extraEnv = {'BORG_RELOCATED_REPO_ACCESS_IS_OK': 'no',
+					'BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK': 'yes'}
+			env = os.environ.copy ()
+			env.update (extraEnv)
+			run ([BORG_PROGRAM, 'config', backupDir, 'id', secrets.token_hex (32)], env=env)
 		formatWorkspace (args, destination)
 		return 0
 

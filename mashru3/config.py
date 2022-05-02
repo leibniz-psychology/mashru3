@@ -26,4 +26,5 @@ TAR_PROGRAM = 'tar'
 LZIP_PROGRAM = 'lzip'
 # Must support `guix environment -p`
 GUIX_PROGRAM = 'guix'
+BORG_PROGRAM = 'borg'
 

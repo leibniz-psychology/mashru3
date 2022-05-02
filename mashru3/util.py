@@ -93,9 +93,9 @@ def limit (it, n):
 class ExecutionFailed (Exception):
 	pass
 
-def run (cmd, stdout=subprocess.PIPE, permittedExitCodes=None):
+def run (cmd, stdout=subprocess.PIPE, permittedExitCodes=None, env=None):
 	logger.debug (f'running {cmd}')
-	ret = subprocess.run (cmd, stdout=stdout, stderr=subprocess.PIPE)
+	ret = subprocess.run (cmd, stdout=stdout, stderr=subprocess.PIPE, env=env)
 	permittedExitCodes = permittedExitCodes or [0]
 	if ret.returncode not in permittedExitCodes:
 		raise ExecutionFailed (cmd, permittedExitCodes, ret)
