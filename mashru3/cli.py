@@ -269,6 +269,9 @@ def doList (args):
 
 					if not ignoreWorkspace:
 						formatResult (args, ws.toDict (), f'{ws.directory}: {ws.metadata.get("name", "")}')
+
+					# All subdirectories belong to this workspace, no nested workspaces.
+					dirs.clear ()
 			except InvalidWorkspace:
 				pass
 
