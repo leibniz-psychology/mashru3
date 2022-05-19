@@ -90,6 +90,9 @@ class Workspace:
 		self.directory = Path (d).resolve ()
 		self.dirfd = os.open (self.directory, flags=0)
 
+	def __del__ (self):
+		os.close (self.dirfd)
+
 	def resetMetadata (self):
 		stamp = now ()
 		self.metadata = ModificationAwareDict (
