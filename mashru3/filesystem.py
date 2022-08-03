@@ -156,31 +156,33 @@ def getPermissions (path: Path):
 	else:
 		def fromPermset (permset):
 			return str (permset).replace ('-', '')
-		def fromUid (uid, permset, extra=''):
+
+		def fromUid (dest, uid, permset, extra=''):
 			name = getpwuid (s.st_uid).pw_name
-			ret = perms['user'][name] = fromPermset (permset) + extra
-			return ret
-		def fromGid (gid, permset):
+			perms = fromPermset (permset) + extra
+			dest.update ([(name, perms)])
+
+		def fromGid (dest, gid, permset):
 			name = getgrgid (gid).gr_name
-			ret = perms['group'][name] = fromPermset (permset)
-			return ret
+			perms = fromPermset (permset)
+			dest.update ([(name, perms)])
 
 		acl = posix1e.ACL (file=path)
 		s = path.lstat ()
-		perms = dict (user=dict (), group=dict (), other='')
+		perms = dict (user=dict (), group=dict (), acl=dict (group=dict (), user=dict ()), other='')
 		for entry in acl:
 			if entry.tag_type == posix1e.ACL_USER_OBJ:
 				# for owner
-				p = fromUid (s.st_uid, entry.permset, 'Tt')
+				fromUid (perms['user'], s.st_uid, entry.permset, 'Tt')
 			elif entry.tag_type == posix1e.ACL_GROUP_OBJ:
 				# for file group
-				fromGid (s.st_gid, entry.permset)
+				fromGid (perms['group'], s.st_gid, entry.permset)
 			elif entry.tag_type == posix1e.ACL_USER:
 				# named user
-				fromUid (entry.qualifier, entry.permset)
+				fromUid (perms['acl']['user'], entry.qualifier, entry.permset)
 			elif entry.tag_type == posix1e.ACL_GROUP:
 				# named group
-				fromGid (entry.qualifier, entry.permset)
+				fromGid (perms['acl']['group'], entry.qualifier, entry.permset)
 			elif entry.tag_type == posix1e.ACL_OTHER:
 				# world
 				perms['other'] = fromPermset (entry.permset)
