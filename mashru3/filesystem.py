@@ -158,12 +158,18 @@ def getPermissions (path: Path):
 			return str (permset).replace ('-', '')
 
 		def fromUid (dest, uid, permset, extra=''):
-			name = getpwuid (s.st_uid).pw_name
+			try:
+				name = getpwuid (uid).pw_name
+			except KeyError:
+				name = str (uid)
 			perms = fromPermset (permset) + extra
 			dest.update ([(name, perms)])
 
 		def fromGid (dest, gid, permset):
-			name = getgrgid (gid).gr_name
+			try:
+				name = getgrgid (gid).gr_name
+			except KeyError:
+				name = str (gid)
 			perms = fromPermset (permset)
 			dest.update ([(name, perms)])
 
