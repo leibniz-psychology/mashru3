@@ -18,7 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import os, logging
+import os, logging, getpass
 from pathlib import Path
 from contextlib import contextmanager
 from enum import Enum
@@ -199,6 +199,10 @@ def getPermissions (path: Path):
 				pass
 			else:
 				logger.warning (f'got unhandled ACL entry tag_type={entry.tag_type}')
+		perms['mine'] = ''.join ([name if os.access (path, flag, effective_ids=True) else ''
+				for flag, name in [(os.R_OK, 'r'), (os.W_OK, 'w'), (os.X_OK, 'x')]])
+		if getpass.getuser () in perms['user']:
+			perms['mine'] += 'Tt'
 		return perms
 
 
