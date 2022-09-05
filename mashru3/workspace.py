@@ -18,7 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import secrets, os, configparser, subprocess, time, logging, re, contextlib
+import secrets, os, configparser, subprocess, time, logging, re, contextlib, grp, pwd
 from pathlib import Path
 from getpass import getuser
 from collections import UserDict
@@ -109,14 +109,42 @@ class Workspace:
 
 	def toDict (self):
 		wsdir = self.directory
+		permissions = getPermissions (wsdir)
+		users, groups = self.usersGroupsFromPermissions (permissions)
+
 		d = dict (path=str (wsdir),
 				profilePath=str (self.profilepath.resolve ()),
 				metadata=self.metadata.data,
-				permissions=getPermissions (wsdir),
+				permissions=permissions,
+				groups=groups,
+				users=users,
 				applications=list (self.applications),
 				packages=[p.toDict () for p in self.packages],
 				)
 		return d
+
+	@staticmethod
+	def usersGroupsFromPermissions (permissions):
+		groups = dict ()
+		users = dict ()
+
+		visitGroups = set (permissions.get('acl', dict()).get ('group', dict()).keys ())
+		visitUsers = set (permissions.get ('acl', dict()).get ('user', dict()).keys ())
+		for name in visitGroups:
+			try:
+				g = grp.getgrnam (name)
+				groups[name] = dict (name=g.gr_name, gid=g.gr_gid, members=g.gr_mem)
+				visitUsers.update (g.gr_mem)
+			except KeyError:
+				pass
+		for name in visitUsers:
+			try:
+				u = pwd.getpwnam (name)
+				users[name] = dict (name=u.pw_name, uid=u.pw_uid, gid=u.pw_gid,
+						homedir=u.pw_dir, shell=u.pw_shell, gecos=u.pw_gecos)
+			except KeyError:
+				pass
+		return users, groups
 
 	def _writeMetadata (self):
 		if self.metadata.modified:
