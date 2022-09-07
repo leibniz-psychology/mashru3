@@ -111,6 +111,11 @@ class Workspace:
 		wsdir = self.directory
 		permissions = getPermissions (wsdir)
 		users, groups = self.usersGroupsFromPermissions (permissions)
+		try:
+			packages = [p.toDict () for p in self.packages]
+		except Exception as e:
+			logging.error (f'Failed to retrieve packages: {e}')
+			packages = None
 
 		d = dict (path=str (wsdir),
 				profilePath=str (self.profilepath.resolve ()),
@@ -119,7 +124,7 @@ class Workspace:
 				groups=groups,
 				users=users,
 				applications=list (self.applications),
-				packages=[p.toDict () for p in self.packages],
+				packages=packages,
 				)
 		return d
 
