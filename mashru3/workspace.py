@@ -134,7 +134,9 @@ class Workspace:
 		users = dict ()
 
 		visitGroups = set (permissions.get('acl', dict()).get ('group', dict()).keys ())
+		visitGroups.update (permissions.get ('group', dict ()).keys ())
 		visitUsers = set (permissions.get ('acl', dict()).get ('user', dict()).keys ())
+		visitUsers.update (permissions.get ('user', dict ()).keys ())
 		for name in visitGroups:
 			try:
 				g = grp.getgrnam (name)
