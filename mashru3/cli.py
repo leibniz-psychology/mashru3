@@ -38,7 +38,8 @@ from .krb5 import defaultRealm
 from .util import getattrRecursive, prefixes, isPrefix, parseRecfile, limit, run, ExecutionFailed, now
 from .filesystem import Busy, softlock, setPermissions, PermissionTarget
 from .manifest import modifyManifest
-from .workspace import Workspace, WorkspaceException, InvalidWorkspace
+from .workspace import (Workspace, WorkspaceException, InvalidWorkspace,
+		WorkspacePackageBuildFailure, WorkspaceBroken)
 from .config import *
 
 logger = logging.getLogger ('cli')
@@ -585,7 +586,7 @@ def doPackageModify (args, ws):
 
 		try:
 			ws.ensureProfile ()
-		except ExecutionFailed:
+		except Exception:
 			# revert
 			logger.error ('New manifest is not valid, reverting changes.')
 			with open (newManifestPath, 'w') as fd:
@@ -613,7 +614,7 @@ def doPackageUpgrade (args, ws):
 
 		try:
 			ws.ensureProfile ()
-		except ExecutionFailed:
+		except Exception:
 			# revert
 			logger.error ('Upgrade failed, reverting changes.')
 			with open (newChannelPath, 'w') as fd:
@@ -765,4 +766,12 @@ def main ():
 		logger.error ('Workspace is currently busy. Try again.')
 		formatResult (args, dict (status='busy'), None)
 		return 4
+	except WorkspacePackageBuildFailure as e:
+		ret = e.args[0]
+		formatResult (args, dict (status='package_build_error',
+				packages=ret))
+		return 5
+	except WorkspaceBroken as e:
+		formatResult (args, dict (status='workspace_broken'))
+		return 5
 

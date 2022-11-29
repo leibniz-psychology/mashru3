@@ -71,6 +71,19 @@ class WorkspaceException (Exception):
 class InvalidWorkspace (WorkspaceException):
 	pass
 
+class WorkspacePackageBuildFailure (WorkspaceException):
+	""" Package failed to build """
+	pass
+
+class WorkspaceBroken (WorkspaceException):
+	""" manifest.scm is broken """
+	pass
+
+def storePathToPackageName (p):
+	""" Extract the package name from a Guix store path """
+	m = re.match (r'/gnu/store/[a-z0-9]+-([a-z0-9-]+)-[0-9-.]+(\.drv)?', p)
+	return m.group (1)
+
 class Workspace:
 	# packages that are essential to mashru3 and must always be installed
 	extraPackages = {'tini'}
@@ -294,6 +307,21 @@ class Workspace:
 	def ensureProfile (self):
 		""" Ensure the profile directory .guix-profile exists and matches the current manifest and guix """
 		# we need a runnable guix
+		def decodeFailure (e):
+			""" Figure out what went wrong. Guix does not have a programmatic way
+			of doing so, so parse stdout. """
+			stderr = e.args[2].stderr.decode ('utf-8')
+			m = re.findall (r"^guix package: error: build of `(/[^ ']+\.drv)' failed$",
+					stderr, re.M)
+			if m:
+				raise WorkspacePackageBuildFailure (
+						list (map (storePathToPackageName, m))) from None
+			if "guix package: error: failed to load '.config/guix/manifest.scm'" in stderr:
+				# Maybe a syntax error, but not sure.
+				raise WorkspaceBroken ()
+
+			raise e
+
 		with self.chdir ():
 			with softlock (self.relCacheDir.joinpath (__package__ + '.ensureProfile.lock')):
 				self.ensureGuix ()
@@ -329,18 +357,21 @@ class Workspace:
 					if self.extraPackages:
 						cmd.append ('-i')
 						cmd.extend (self.extraPackages)
-					run (cmd)
-					if profilePath.exists ():
-						# Guix can decide there is nothing to do and will not change
-						# the symlinks. Make sure we don’t run this again by setting a
-						# new c/mtime.
-						now = time.time ()
-						try:
-							os.utime (profilePath, times=(now, now), follow_symlinks=False)
-						except PermissionError:
-							# This can happen if we’re not the owner of	a project. Nothing we
-							# can do, so ignore.
-							pass
+					try:
+						run (cmd)
+						if profilePath.exists ():
+							# Guix can decide there is nothing to do and will not change
+							# the symlinks. Make sure we don’t run this again by setting a
+							# new c/mtime.
+							now = time.time ()
+							try:
+								os.utime (profilePath, times=(now, now), follow_symlinks=False)
+							except PermissionError:
+								# This can happen if we’re not the owner of	a project. Nothing we
+								# can do, so ignore.
+								pass
+					except ExecutionFailed as e:
+						decodeFailure (e)
 
 	def ensureGcroots (self):
 		""" Make sure all store references are protected from the garbage collector """

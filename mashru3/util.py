@@ -18,7 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import re, subprocess, logging
+import re, subprocess, logging, os
 from datetime import datetime
 
 import pytz
@@ -94,7 +94,9 @@ class ExecutionFailed (Exception):
 	pass
 
 def run (cmd, stdout=subprocess.PIPE, permittedExitCodes=None, env=None):
-	logger.debug (f'running {cmd}')
+	logger.debug (f'running {cmd} with env {env}')
+	env = env or os.environ.copy ()
+	env['LANG'] = 'C'
 	ret = subprocess.run (cmd, stdout=stdout, stderr=subprocess.PIPE, env=env)
 	permittedExitCodes = permittedExitCodes or [0]
 	if ret.returncode not in permittedExitCodes:
