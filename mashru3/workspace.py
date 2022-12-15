@@ -18,7 +18,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import secrets, os, configparser, subprocess, time, logging, re, contextlib, grp, pwd
+import secrets, os, configparser, subprocess, time, logging, re, contextlib, grp, pwd, json
 from pathlib import Path
 from getpass import getuser
 from collections import UserDict
@@ -373,11 +373,24 @@ class Workspace:
 					except ExecutionFailed as e:
 						decodeFailure (e)
 
+	# Running thesee scripts assumes they are compatible with pretty much any
+	# Guix version out there or that Guix has a stable API (it does not). Would
+	# be better to slowly migrate all projects to having a package containing
+	# the proper version of these scripts (mashru3-helpers?).
+
 	def ensureGcroots (self):
 		""" Make sure all store references are protected from the garbage collector """
 		with importlib_resources.files (__package__).joinpath ('scripts/addRoots.scm') as script:
 			cmd = [GUIX_PROGRAM, 'repl', '--', script, self.directory]
 			run (cmd)
+
+	def renvLockfile (self):
+		with importlib_resources.files (__package__).joinpath ('scripts/manifest2renv.scm') as script:
+			cmd = [self.directory / self.relGuixBin, 'repl', '--', script, self.directory / self.relManifestPath]
+			ret = run (cmd)
+			# Guix’s JSON encode escapes forward slashes (/), which confuses R’s
+			# JSON decoder, so decode here and re-encode in cli
+			return json.loads (ret.stdout.decode ('utf-8'))
 
 	@classmethod
 	@contextlib.contextmanager

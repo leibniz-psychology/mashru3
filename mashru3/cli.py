@@ -417,10 +417,24 @@ def doExport (args, ws):
 	tempDir = output.parent
 	if args.kind == 'zip':
 		with tempfile.TemporaryDirectory (dir=tempDir) as tempDir:
-			tempArchive = Path (tempDir) / 'output.zip'
+			tempDir = Path (tempDir)
+			tempArchive = tempDir / 'output.zip'
 			logger.debug (f'using temporary file {tempArchive}')
-			os.chdir (ws.directory)
 
+			# Create and archive lockfile.
+			try:
+				os.chdir (tempDir)
+				with open ('renv.lock', 'w') as fd:
+					json.dump (ws.renvLockfile (), fd)
+				cmd = [ZIP_PROGRAM,
+						tempArchive, # output
+						'renv.lock']
+				run (cmd)
+			except Exception as e:
+				# Ignore any errors, so we can at least export data.
+				logger.warning (f'Cannot write renv.lock file: {e}')
+
+			os.chdir (ws.directory)
 			cmd = [ZIP_PROGRAM]
 			for p in excludePattern:
 				cmd.extend (['-x', p])
@@ -432,14 +446,29 @@ def doExport (args, ws):
 					tempArchive, # output
 					'.', # input
 					])
-
 			run (cmd)
+
 			os.rename (tempArchive, output)
 			formatResult (args, dict (path=output), output)
 			return 0
 	elif args.kind == 'tar+lzip':
 		with tempfile.TemporaryDirectory (dir=tempDir) as tempDir:
-			tempArchive = Path (tempDir) / 'output.tar.lz'
+			tempDir = Path (tempDir)
+			tempArchive = tempDir / 'output.tar.lz'
+			base = ws.directory.name
+			haveRenv = False
+
+			# Create lockfile. Will be archived later.
+			try:
+				os.mkdir (tempDir / base)
+				os.chdir (tempDir / base)
+				with open ('renv.lock', 'w') as fd:
+					json.dump (ws.renvLockfile (), fd)
+				haveRenv = True
+			except Exception as e:
+				# Ignore any errors, so we can at least export data.
+				logger.warning (f'Cannot write renv.lock file: {e}')
+
 			# tarballs include the directory name by convention, so chdir to
 			# the parent and use .name as input
 			os.chdir (ws.directory.parent)
@@ -453,12 +482,13 @@ def doExport (args, ws):
 					'-c', # create
 					'-f', tempArchive, # output
 					]
-			base = ws.directory.name
 			for p in excludePattern:
 				cmd.append(f'--exclude={base}/{p}')
 			if args.verbose:
 				cmd.append ('--verbose')
 			cmd.append (base) # input
+			if haveRenv:
+				cmd.extend (['-C', tempDir, os.path.join (base, 'renv.lock')])
 
 			run (cmd)
 			os.rename (tempArchive, output)
