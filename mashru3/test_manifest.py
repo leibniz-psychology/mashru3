@@ -20,19 +20,31 @@
 
 import pytest
 
-from .manifest import modifyManifest
+from .cli import modifyManifest
+from .util import ExecutionFailed
 
 @pytest.mark.parametrize("manifest,specs,expected", [
-	pytest.param ("(specifications->manifest '())", [], "(specifications->manifest '())", id='noop'),
-	pytest.param ("(specifications->manifest\n'())", [], "(specifications->manifest\n'())", id='whitespace'),
-	pytest.param ("(specifications->manifest '())", ['+foobar'], "(specifications->manifest '(\"foobar\"\n))", id='add-single'),
-	pytest.param ("(specifications->manifest '(\"foobar\"))", ['-foobar'], "(specifications->manifest '())", id='remove-single'),
+	pytest.param ("(specifications->manifest '())", [], "(specifications->manifest '())\n", id='noop'),
+	pytest.param ("(specifications->manifest '())", ['+foobar'], "(specifications->manifest '(\"foobar\"))\n", id='add-single'),
+	pytest.param ("(specifications->manifest '(\"foobar\"))", ['-foobar'], "(specifications->manifest '())\n", id='remove-single'),
+	pytest.param ("(specifications->manifest '(\"foobar\" \"barbaz\"))", ['-foobar'], "(specifications->manifest '(\"barbaz\"))\n", id='remove-and-keep'),
+	pytest.param ("(specifications->manifest '(\"foobar\"))", ['+barbaz'], "(specifications->manifest '(\"foobar\" \"barbaz\"))\n", id='add-and-keep'),
 	pytest.param ("""(specifications->manifest
 ;; Comment
 '("foobar"))""", ["-foobar"], """(specifications->manifest
+                          ;; Comment
+                          '())\n""", id='comment-between'),
+	pytest.param ("""(specifications->manifest '("foobar")
 ;; Comment
-'())""", id='comment', marks=pytest.mark.xfail),
-	pytest.param ("", ['-foobar'], ValueError, id='no-manifest'),
+)""", ["-foobar"], """(specifications->manifest '()
+                          ;; Comment
+                          )\n""", id='comment-between2'),
+	pytest.param ("""(specifications->manifest
+'( ;; Comment
+"foobar" "barbaz"))""", ["-foobar"], """(specifications->manifest '( ;; Comment
+                             "barbaz"))\n""", id='comment-inside'),
+	pytest.param ("", ['-foobar'], ExecutionFailed, id='no-manifest', marks=pytest.mark.xfail),
+	pytest.param ("(specifications->manifest '(invalid))", ["-invalid"], ExecutionFailed, id='no-replacement-2', marks=pytest.mark.xfail),
 	])
 def test_modifyManifest (manifest, specs, expected):
 	if isinstance (expected, type):

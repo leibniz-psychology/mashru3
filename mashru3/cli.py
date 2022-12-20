@@ -33,11 +33,11 @@ from functools import wraps
 
 import yaml
 import magic
+import importlib_resources
 
 from .krb5 import defaultRealm
 from .util import getattrRecursive, prefixes, isPrefix, parseRecfile, limit, run, ExecutionFailed, now
 from .filesystem import Busy, softlock, setPermissions, PermissionTarget
-from .manifest import modifyManifest
 from .workspace import (Workspace, WorkspaceException, InvalidWorkspace,
 		WorkspacePackageBuildFailure, WorkspaceBroken)
 from .config import *
@@ -596,6 +596,12 @@ def doPackageSearch (args, ws):
 					r[k] = int (r[k])
 			formatResult (args, r, f'{r["name"]} ({r["version"]})\n  {r.get ("synopsis", "")}\n')
 
+def modifyManifest (manifest, specs):
+	with importlib_resources.files (__package__).joinpath ('scripts/editManifest.scm') as script:
+		cmd = [GUIX_PROGRAM, 'repl', '--', script] + specs
+		ret = run (cmd, input=manifest.encode ('utf-8'))
+		return ret.stdout.decode ('utf-8')
+
 @withWorkspace
 def doPackageModify (args, ws):
 	with ws.chdir ():
@@ -604,7 +610,7 @@ def doPackageModify (args, ws):
 
 		try:
 			newManifest = modifyManifest (manifest, args.packages)
-		except ValueError:
+		except ExecutionFailed:
 			logging.error ('Cannot modify manifest.')
 			return 2
 
