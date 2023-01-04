@@ -237,7 +237,7 @@ class Workspace:
 				'-u', user,
 				# allow passing the current language, assume GUIX_LOCPATH is
 				# set properly before starting
-				'-E', '^(LANG|GUIX_LOCPATH|TZDIR)$',
+				'-E', '^(LANG|GUIX_LOCPATH|TZDIR|TZ)$',
 				'--no-cwd',
 				f'--share={self.directory}=/home/{user}',
 				f'--profile={self.profilepath}',

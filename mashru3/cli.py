@@ -210,6 +210,9 @@ def doRun (args, ws):
 		os.environ['GUIX_LOCPATH'] = '/home/joeuser/.guix-profile/lib/locale'
 		# path for timezone data (if installed, not set via search-path)
 		os.environ['TZDIR'] = '/home/joeuser/.guix-profile/share/zoneinfo'
+		# Override to UTC for reproducibility and because we don’t have
+		# /etc/localtime or similar.
+		os.environ['TZ'] = 'UTC'
 		try:
 			p = subprocess.Popen (cmd)
 
