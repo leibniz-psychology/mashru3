@@ -233,7 +233,7 @@ class Workspace:
 		""" Command that starts a guix environment """
 		user = 'joeuser'
 		cmd = [GUIX_PROGRAM,
-				'environment', '-C', '-N',
+				'shell', '-C', '-N',
 				'-u', user,
 				# allow passing the current language, assume GUIX_LOCPATH is
 				# set properly before starting
