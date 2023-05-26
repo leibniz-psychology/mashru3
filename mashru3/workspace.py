@@ -132,6 +132,7 @@ class Workspace:
 
 		d = dict (path=str (wsdir),
 				profilePath=str (self.profilepath.resolve ()),
+				profilePathValid=self.profilepath.is_dir (),
 				metadata=self.metadata.data,
 				permissions=permissions,
 				groups=groups,
